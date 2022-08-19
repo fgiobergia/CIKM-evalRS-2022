@@ -1,0 +1,11 @@
+1. triplet loss, vanilla
+Simple solution where an encoder encodes users, an encoder encodes tracks, both to the same dimensionality. Then define loss function as cos-sim(a,n) - cos-sim(a,p) where a is an anchor user, n is a negative track (i.e. a track not liked by user) and p is a track liked by user.
+
+params:
+hidden space size -- needing to define how impactful it can be (currently using 64)
+
+batch size: 4096
+
+limitations: main limitation due to learning only embedding representations for known songs. As such, at prediction time, we can only predict songs that were seen in the training set. This means that we cannot propose songs that were not seen at train time.
+
+

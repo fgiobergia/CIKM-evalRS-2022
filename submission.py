@@ -30,11 +30,12 @@ if __name__ == '__main__':
     # import the basic classes
     from evaluation.EvalRSRunner import EvalRSRunner
     from evaluation.EvalRSRunner import ChallengeDataset
-    from submission.MyModel import MyModel
+    from submission.MyModel import * 
     print('\n\n==== Starting evaluation script at: {} ====\n'.format(datetime.utcnow()))
     # load the dataset
     print('\n\n==== Loading dataset at: {} ====\n'.format(datetime.utcnow()))
     # this will load the dataset with the default values for the challenge
+    #dataset = ChallengeDataset(num_folds=1)
     dataset = ChallengeDataset()
     print('\n\n==== Init runner at: {} ====\n'.format(datetime.utcnow()))
     # run the evaluation loop
@@ -50,17 +51,20 @@ if __name__ == '__main__':
     # NOTE: this evaluation will run with default values for the parameters and the upload flag
     # For local testing and iteration, you can check the tutorial in the notebooks folder and the
     # kaggle notebook: https://www.kaggle.com/code/vinidd/cikm-data-challenge
-    my_model = MyModel(
-        items=dataset.df_tracks,
-        # kwargs may contain additional arguments in case, for example, you 
-        # have data augmentation functions that you wish to use in combination
-        # with the dataset provided by the runner.
-        my_custom_argument='my_custom_argument' 
-    )
+
+    my_model = MyModel(dataset.df_tracks, dataset.df_users)
+    #my_model = MyDummyModel(
+    #    items=dataset.df_tracks,
+    #    # kwargs may contain additional arguments in case, for example, you 
+    #    # have data augmentation functions that you wish to use in combination
+    #    # with the dataset provided by the runner.
+    #    my_custom_argument='my_custom_argument' 
+    #)
     # run evaluation with your model
     # the evaluation loop will magically perform the fold splitting, training / testing
     # and then submit the results to the leaderboard
     runner.evaluate(
-        model=my_model
+        model=my_model,
+        # upload=False,
         )
     print('\n\n==== Evaluation ended at: {} ===='.format(datetime.utcnow()))
