@@ -168,7 +168,6 @@ class MyModel(RecModel):
 
                     cum_loss = cum_loss * alpha + (1-alpha) * loss.item()
                     bar.set_postfix(loss=cum_loss)
-        
 
 
     def predict(self, user_ids: pd.DataFrame) -> pd.DataFrame:
@@ -226,7 +225,10 @@ class MyModel(RecModel):
 
             with tqdm(range(cos_mat.shape[0])) as bar:
                 for i in bar:
-                    cos_mat_sub = known_tracks_array[np.argsort(-cos_mat[i])]
+                    curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
+
+                    parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
+                    cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
                     chosen = []
                     j = 0
                     while len(chosen) < self.top_k:
