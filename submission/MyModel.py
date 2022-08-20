@@ -67,17 +67,22 @@ class ContrastiveModel(nn.Module):
         return neg_cos - pos_cos
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track):
+    def __init__(self, X_user, X_track, device=None):
         assert X_user.shape[0] == X_track.shape[0]
 
         self.X_user = X_user
         self.X_track = X_track
 
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+
     def __len__(self):
         return self.X_user.shape[0]
     
     def _tensorify(self, x):
-        return torch.tensor(x.todense()).flatten()
+        return torch.tensor(x.todense()).flatten().to(self.device)
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
@@ -106,9 +111,7 @@ class MyModel(RecModel):
 
         keep_albums_thresh = 7 # keep albums that show up in at least these many tracks
 
-        self.tracks = tracks.reset_index()
-        self.users = users.reset_index()
-        self.known_tracks = list(set(self.tracks["track_id"].values.tolist()))
+        self.known_tracks = list(set(tracks.index.values.tolist()))
 
         def map_list(s):
             # quick n dirty approach (though not as bad as eval())
@@ -118,6 +121,7 @@ class MyModel(RecModel):
         freqs = Counter([ b for a in tracks["albums_id"].tolist() for b in a ])
         kept_albums = { k for k, v in freqs.items() if v >= keep_albums_thresh }
         tracks["albums_id"] = tracks["albums_id"].map(lambda x: list(set(x) & kept_albums))
+
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -129,7 +133,7 @@ class MyModel(RecModel):
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
         
-        batch_size = 4096
+        batch_size = 512
         n_epochs = 1
         shared_emb_dim = 64
 
@@ -142,7 +146,7 @@ class MyModel(RecModel):
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
         ds = UserTrackDataset(X_users, X_tracks)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
@@ -155,7 +159,7 @@ class MyModel(RecModel):
                     # if i == 50:
                     #     return
                     opt.zero_grad()
-                    loss = self.cmodel(x_users.to(self.device), x_tracks_pos.to(self.device), x_tracks_neg.to(self.device)).mean()
+                    loss = self.cmodel(x_users, x_tracks_pos, x_tracks_neg).mean()
                     loss.backward()
                     opt.step()
 
