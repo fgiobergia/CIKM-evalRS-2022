@@ -14,6 +14,8 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+from collections import Counter
+
 # class EpochLogger(CallbackAny2Vec):
 #     '''Callback to log information about training'''
 #     def __init__(self, n_epochs):
@@ -102,29 +104,20 @@ class MyModel(RecModel):
 
         self.top_k = top_k
 
-        # The stuff below may be needed if running word2vec or other embedding
-        # algorithms which require words (tokens) and not numerical values
-        # (i.e. do some discretization)
-        # n_bins = 10
-
-        # users = users.reset_index()
-        # tracks = tracks.reset_index()
-        
-        # # convert user features that are numerical into bins
-        # for col in users.select_dtypes(np.float64):
-        #     users[col] = pd.qcut(users[col], q=n_bins, duplicates="drop").astype(str)
-
-        # for col in users:
-        #     users[col] = users[col].map(lambda x: f"{col}={x}")
-
-        # tracks.drop(columns=["track", "artist", "albums_id", "albums"], inplace=True)
-
-        # for col in tracks:
-        #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
+        keep_albums_thresh = 7 # keep albums that show up in at least these many tracks
 
         self.tracks = tracks.reset_index()
         self.users = users.reset_index()
         self.known_tracks = list(set(self.tracks["track_id"].values.tolist()))
+
+        def map_list(s):
+            # quick n dirty approach (though not as bad as eval())
+            return list(map(int,s[1:-1].split(", ")))
+        tracks["albums_id"] = tracks["albums_id"].map(map_list)
+
+        freqs = Counter([ b for a in tracks["albums_id"].tolist() for b in a ])
+        kept_albums = { k for k, v in freqs.items() if v >= keep_albums_thresh }
+        tracks["albums_id"] = tracks["albums_id"].map(lambda x: list(set(x) & kept_albums))
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
