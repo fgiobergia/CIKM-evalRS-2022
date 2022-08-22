@@ -104,7 +104,10 @@ class UserTrackDataset():
 class MyModel(RecModel):
 
     def __init__(self, tracks: pd.DataFrame, users: pd.DataFrame, top_k : int = 100, **kwargs):
-
+        try:
+            torch.multiprocessing.set_start_method('spawn')# good solution !!!!
+        except:
+            pass
         self.top_k = top_k
 
         # The stuff below may be needed if running word2vec or other embedding
@@ -140,7 +143,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 1
+        n_epochs = 2
         shared_emb_dim = 64
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -152,7 +155,7 @@ class MyModel(RecModel):
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
         ds = UserTrackDataset(X_users, X_tracks)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=0)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
