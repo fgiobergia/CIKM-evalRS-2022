@@ -35,7 +35,9 @@ class UserEncoder(nn.Module):
         self.fc = nn.Linear(in_size, out_size)
     
     def forward(self, x):
-        return self.fc(x)
+        x = self.fc(x)
+        return x
+
 
 class TrackEncoder(nn.Module):
     def __init__(self, in_size, out_size):
@@ -44,7 +46,8 @@ class TrackEncoder(nn.Module):
         self.fc = nn.Linear(in_size, out_size)
     
     def forward(self, x):
-        return self.fc(x)
+        x = self.fc(x)
+        return x
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
@@ -144,7 +147,8 @@ class MyModel(RecModel):
         
         batch_size = 512
         n_epochs = 2
-        shared_emb_dim = 64
+        shared_emb_dim = 128
+        num_workers = 4
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -155,7 +159,7 @@ class MyModel(RecModel):
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
         ds = UserTrackDataset(X_users, X_tracks)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
