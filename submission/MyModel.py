@@ -14,6 +14,29 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+def get_artists_weight(train_df, n_bins=10):
+    gb = train_df.groupby("track_id").size()
+    artists = gb.index.tolist()
+    counts = gb.tolist()
+
+    bins = np.logspace(np.log10(min(counts)), np.log10(max(counts)), n_bins, base=10)
+    bins[-1]+=1
+
+    weights = np.histogram(counts, bins=bins)[0]
+    weights = weights/weights.sum()
+
+    mapper = dict(zip(artists, weights[np.digitize(counts, bins=bins)-1]))
+    return train_df["track_id"].map(mapper.get)
+
+def get_gender_weight(train_df, users_df):
+    gb = users_df.fillna("n").groupby("gender").size()
+    genders = gb.index.tolist()
+    weights = 1/gb.values
+    weights = weights / weights.sum()
+    gender_weights = dict(zip(genders, weights))
+    users_lookup = dict(zip(users_df.index, users_df["gender"].fillna("n").map(gender_weights.get)))
+    return train_df["user_id"].map(users_lookup.get)
+
 # class EpochLogger(CallbackAny2Vec):
 #     '''Callback to log information about training'''
 #     def __init__(self, n_epochs):
@@ -68,11 +91,12 @@ class ContrastiveModel(nn.Module):
         return neg_cos - pos_cos
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
+    def __init__(self, X_user, X_track, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
 
         self.X_user = X_user
         self.X_track = X_track
+        self.w = w
 
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -83,7 +107,7 @@ class UserTrackDataset():
         return self.X_user.shape[0]
     
     def _tensorify(self, x):
-        return torch.tensor(x.todense()).flatten().to(self.device)
+        return torch.tensor(x.todense(), device=self.device).flatten()
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
@@ -102,7 +126,7 @@ class UserTrackDataset():
         #         same_user = False
         
         x_track_neg = self._tensorify(self.X_track[j])
-        return x_user, x_track_pos, x_track_neg
+        return x_user, x_track_pos, x_track_neg, torch.tensor(self.w[i], device=self.device)
 
 class MyModel(RecModel):
 
@@ -134,6 +158,9 @@ class MyModel(RecModel):
         #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
+        self.users_df = users
+
+
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -146,7 +173,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 2
+        n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
 
@@ -158,21 +185,24 @@ class MyModel(RecModel):
         X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
-        ds = UserTrackDataset(X_users, X_tracks)
+        # artists_weights = get_artists_weight(train_df)
+        gender_weights = get_gender_weight(train_df, self.users_df)
+        ds = UserTrackDataset(X_users, X_tracks, gender_weights.tolist())
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         for epoch in range(n_epochs):
+            print(f"Epoch {epoch+1}/{n_epochs}")
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
+                for i, (x_users, x_tracks_pos, x_tracks_neg, w) in bar:
                     # if i == 50:
                     #     return
                     opt.zero_grad()
-                    loss = self.cmodel(x_users, x_tracks_pos, x_tracks_neg).mean()
+                    loss = (w * self.cmodel(x_users, x_tracks_pos, x_tracks_neg)).mean()
                     loss.backward()
                     opt.step()
 
