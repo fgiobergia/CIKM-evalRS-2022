@@ -3,7 +3,8 @@ import pandas as pd
 from reclist.abstractions import RecModel
 import random
 
-# from gensim.models.callback import CallbackAny2Vec
+from gensim.models.callbacks import CallbackAny2Vec
+from gensim.models import Word2Vec
 from tqdm import tqdm
 
 import torch
@@ -14,19 +15,19 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
-# class EpochLogger(CallbackAny2Vec):
-#     '''Callback to log information about training'''
-#     def __init__(self, n_epochs):
-#         self.bar = tqdm(n_epochs)
+class EpochLogger(CallbackAny2Vec):
+    '''Callback to log information about training'''
+    def __init__(self, n_epochs):
+        self.bar = tqdm(total=n_epochs)
 
-#     def on_epoch_begin(self, model):
-#         self.bar.update()
+    def on_epoch_begin(self, model):
+        self.bar.update()
 
-#     def on_epoch_end(self, model):
-#         self.bar.set_postfix(loss=model.get_latest_training_loss())
+    def on_epoch_end(self, model):
+        self.bar.set_postfix(loss=model.get_latest_training_loss())
     
-#     def on_train_end(self, model):
-#         self.bar.close()
+    def on_train_end(self, model):
+        self.bar.close()
 
 class UserEncoder(nn.Module):
     def __init__(self, in_size, out_size):
@@ -125,8 +126,22 @@ class MyModel(RecModel):
 
         # tracks.drop(columns=["track", "artist", "albums_id", "albums"], inplace=True)
 
-        # for col in tracks:
-        #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
+        sentences = []
+        # for col in ["artist_id", "albums_id"]:
+        for track_id, row in tracks.iterrows():
+            sentence = [
+                f'track={track_id}', f'artist={row["artist_id"]}', *[ f"album={i}" for i in map(int,row["albums_id"][1:-1].split(", ")) ]
+            ]
+            sentences.append(sentence)
+        
+        n_epochs = 20
+        self.sentences = sentences
+        print(">>>", self.sentences[0])
+        self.w2v_model = Word2Vec(self.sentences, vector_size=64,  \
+                             window=max(map(len,sentences)),  \
+                             workers=8,
+                             sg=1, hs=0, negative=5, seed=42, \
+                             epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
     
