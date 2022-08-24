@@ -62,10 +62,12 @@ class ContrastiveModel(nn.Module):
         x_track_pos = self.track_enc(x_track_pos)
         x_track_neg = self.track_enc(x_track_neg)
 
-        pos_cos = self.cos(x_user, x_track_pos)
-        neg_cos = self.cos(x_user, x_track_neg)
+        return x_user, x_track_pos, x_track_neg
 
-        return neg_cos - pos_cos
+        # pos_cos = self.cos(x_user, x_track_pos)
+        # neg_cos = self.cos(x_user, x_track_neg)
+
+        # return neg_cos - pos_cos
 
 class UserTrackDataset():
     def __init__(self, X_user, X_track, device=None):
@@ -74,16 +76,13 @@ class UserTrackDataset():
         self.X_user = X_user
         self.X_track = X_track
 
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
+        self.device = device
 
     def __len__(self):
         return self.X_user.shape[0]
     
     def _tensorify(self, x):
-        return torch.tensor(x.todense()).flatten().to(self.device)
+        return torch.tensor(x.todense(), device=self.device).flatten()
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
@@ -146,9 +145,11 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 2
+        n_epochs = 3
         shared_emb_dim = 128
         num_workers = 4
+        margin = .5
+        print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -158,13 +159,21 @@ class MyModel(RecModel):
         X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
-        ds = UserTrackDataset(X_users, X_tracks)
+        ds = UserTrackDataset(X_users, X_tracks, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
+        def cos_dist():
+            cossim = nn.CosineSimilarity()
+            def func(*args, **kwargs):
+                return 1 - cossim(*args, **kwargs)
+            return func
+        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
+
         for epoch in range(n_epochs):
+            print(f"Epoch {epoch+1}/{n_epochs}")
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
@@ -172,7 +181,8 @@ class MyModel(RecModel):
                     # if i == 50:
                     #     return
                     opt.zero_grad()
-                    loss = self.cmodel(x_users, x_tracks_pos, x_tracks_neg).mean()
+                    anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
+                    loss = loss_func(anchor, pos, neg)
                     loss.backward()
                     opt.step()
 
