@@ -14,6 +14,10 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+from collections import Counter
+
+from scipy.sparse import csr_matrix
+
 # class EpochLogger(CallbackAny2Vec):
 #     '''Callback to log information about training'''
 #     def __init__(self, n_epochs):
@@ -70,11 +74,12 @@ class ContrastiveModel(nn.Module):
         # return neg_cos - pos_cos
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
-        assert X_user.shape[0] == X_track.shape[0]
+    def __init__(self, X_user, tracks_list, tracks_vecs, tracks_lookup, device):
 
         self.X_user = X_user
-        self.X_track = X_track
+        self.tracks_list = tracks_list
+        self.tracks_vecs = tracks_vecs
+        self.tracks_lookup = tracks_lookup
 
         self.device = device
 
@@ -86,7 +91,7 @@ class UserTrackDataset():
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
-        x_track_pos = self._tensorify(self.X_track[i])
+        x_track_pos = self._tensorify(self.tracks_vecs[self.tracks_lookup[self.tracks_list[i]]])
         
         j = random.randint(0, len(self)-1)
         
@@ -99,8 +104,7 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        
-        x_track_neg = self._tensorify(self.X_track[j])
+        x_track_neg = self._tensorify(self.tracks_vecs[self.tracks_lookup[self.tracks_list[j]]])
         return x_user, x_track_pos, x_track_neg
 
 class MyModel(RecModel):
@@ -111,6 +115,52 @@ class MyModel(RecModel):
         except:
             pass
         self.top_k = top_k
+
+        keep_albums_thresh = 7 # keep albums that show up in at least these many tracks
+
+        tracks = tracks.reset_index(inplace=False)
+        # self.known_tracks = sorted(list(set(tracks["track_id"].values.tolist())))
+
+        def map_list(s):
+            # quick n dirty approach (though not as bad as eval())
+            return list(map(int,s[1:-1].split(", ")))
+        tracks["albums_id"] = tracks["albums_id"].map(map_list)
+
+        freqs = Counter([ b for a in tracks["albums_id"].tolist() for b in a ])
+        kept_albums = { k for k, v in freqs.items() if v >= keep_albums_thresh }
+        tracks["albums_id"] = tracks["albums_id"].map(lambda x: list(set(x) & kept_albums))
+
+        self.albums_map = { album_id: pos for pos, album_id in enumerate(sorted(list(kept_albums))) }
+        self.albums_reverse_map = { v: k for k,v in self.albums_map.items() }
+        self.artists_map = { artist_id: pos for pos, artist_id in enumerate(sorted(list(set(tracks["artist_id"])))) }
+        self.artists_reverse_map = { v: k for k,v in self.artists_map.items() }
+
+        data = []
+        row_ind = []
+        col_ind = []
+        
+        self.tracks_lookup = { k: v for v,k in enumerate(tracks["track_id"].values.tolist()) } # "where is track X?"
+        # keys are as       sumed returned in order (should be guaranteed since python 3.something)
+        # (due to insertion order)
+        self.tracks_reverse_lookup = np.array(list(self.tracks_lookup.keys())) # "what is the track at position X?"
+
+        print("Building tracks representations")
+        with tqdm(enumerate(tracks.iterrows()), total=len(tracks)) as bar:
+            for i, (row_id, row) in bar:
+                
+                # insert artist (just 1)
+                data.append(1)
+                row_ind.append(i)
+                col_ind.append(self.artists_map[row.artist_id])
+
+                # insert albums (possibly multiple)
+                for album_id in row.albums_id:
+                    data.append(1)
+                    row_ind.append(i)
+                    col_ind.append(len(self.artists_map) + self.albums_map[album_id])
+        
+        self.tracks_vecs = csr_matrix((data, (row_ind, col_ind)), dtype=np.float32)
+
 
         # The stuff below may be needed if running word2vec or other embedding
         # algorithms which require words (tokens) and not numerical values
@@ -131,8 +181,6 @@ class MyModel(RecModel):
 
         # for col in tracks:
         #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
-
-        self.known_tracks = list(set(tracks.index.values.tolist()))
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -141,28 +189,26 @@ class MyModel(RecModel):
         # training. In a future solution, we will generalize to
         # unseen songs by considering their proximity in some
         # embedding space (e.g. b/c they share the same author/album)
-        self.known_tracks = list(set(train_df["track_id"].values.tolist()))
+        self.known_tracks = sorted(list(set(train_df["track_id"].values.tolist())))
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 3
+        n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
-        margin = .5
+        margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.ohe_users = OneHotEncoder(dtype=np.float32)
-        self.ohe_tracks = OneHotEncoder(dtype=np.float32)
 
         X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
-        X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        ds = UserTrackDataset(X_users, train_df["track_id"].tolist(), self.tracks_vecs, self.tracks_lookup, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(X_users.shape[1], self.tracks_vecs.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
@@ -200,6 +246,8 @@ class MyModel(RecModel):
         would allow for batch predictions of all the target data points.
         
         """
+
+        tracks_pool = np.array(self.known_tracks) # change here if needed
         
         X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
         bs = 1024
@@ -210,53 +258,42 @@ class MyModel(RecModel):
             users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs].todense()).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
 
             print("Loading tracks embeddings")
-            tracks_list = np.array(self.known_tracks).reshape(-1,1)
-            X_tracks = self.ohe_tracks.transform(tracks_list)
-            tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs].todense()).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
+            tracks_pool_vecs = self.tracks_vecs[[ self.tracks_lookup[i] for i in tracks_pool ]]
+            tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(tracks_pool_vecs[i*bs:(i+1)*bs].todense()).to(self.device)).detach().cpu() for i in range(tracks_pool_vecs.shape[0]//bs+1)] )).cpu().detach().numpy()
         finally:
             self.cmodel.train()
 
         self.users_emb = users_emb
         self.track_emb = tracks_emb
 
-        print("Computing cosine similarities")
-        cos_mat = cosine_similarity(users_emb, tracks_emb)
-        self.cos_mat = cos_mat
-
         print("Sorting similarities")
 
-        include_known_tracks = False
-
-        known_tracks_array = np.array(self.known_tracks)
-        assert len(user_ids) == cos_mat.shape[0]
         results = np.zeros((len(user_ids), self.top_k), dtype=int)
 
-        if include_known_tracks:
-            bs = 8
-            with tqdm(range(cos_mat.shape[0] // bs + 1)) as bar:
-                for i in bar:
-                    cos_mat_sub = np.argsort(-cos_mat[i*bs:(i+1)*bs], axis=1)[:, :self.top_k]
-                    results[i*bs:(i+1)*bs] = cos_mat_sub
-            preds = known_tracks_array[results]
-        else:
-            known_likes = {}
-            for user, grp in self.train_df.groupby("user_id"):
-                known_likes[user] = set(grp["track_id"])
+        known_likes = {}
+        for user, grp in self.train_df.groupby("user_id"):
+            known_likes[user] = set(grp["track_id"])
 
-            with tqdm(range(cos_mat.shape[0])) as bar:
-                for i in bar:
-                    curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
+        bs = 1024
+        with tqdm(range(users_emb.shape[0])) as bar:
+            j = 0
+            for i in bar:
+                if i == j:
+                    cos_mat = -cosine_similarity(users_emb[i:i+bs], tracks_emb)
+                    j = i + bs
+                curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
 
-                    parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
-                    cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                    chosen = []
-                    j = 0
-                    while len(chosen) < self.top_k:
-                        if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                            chosen.append(cos_mat_sub[j])
-                        j += 1
-                    results[i] = chosen
-            preds = results
+                parts = np.argpartition(cos_mat[i%bs], kth=curr_k)[:curr_k]
+                cos_mat_sub = tracks_pool[parts[np.argsort(cos_mat[i%bs,parts])]]
+                chosen = []
+                k = 0
+                while len(chosen) < self.top_k:
+                    if cos_mat_sub[k] not in known_likes[int(user_ids.iloc[i])]:
+                        chosen.append(cos_mat_sub[k])
+                    k += 1
+                results[i] = chosen
+        preds = results
+
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
 
