@@ -54,8 +54,6 @@ class ContrastiveModel(nn.Module):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
         self.track_enc = TrackEncoder(track_size, n_dim)
-
-        self.cos = nn.CosineSimilarity()
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
@@ -66,8 +64,6 @@ class ContrastiveModel(nn.Module):
 
         # pos_cos = self.cos(x_user, x_track_pos)
         # neg_cos = self.cos(x_user, x_track_neg)
-
-        # return neg_cos - pos_cos
 
 class UserTrackDataset():
     def __init__(self, X_user, X_track, device=None):
@@ -145,10 +141,10 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 3
+        n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
-        margin = .5
+        margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
