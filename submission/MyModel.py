@@ -54,12 +54,9 @@ class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
-        self.track_enc = TrackEncoder(track_size, n_dim)
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
-        x_track_pos = self.track_enc(x_track_pos)
-        x_track_neg = self.track_enc(x_track_neg)
 
         return x_user, x_track_pos, x_track_neg
 
@@ -67,14 +64,13 @@ class ContrastiveModel(nn.Module):
         # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
-    def __init__(self, X_user, tracks_list, tracks_vecs, tracks_lookup, device=None):
-        assert X_user.shape[0] == X_track.shape[0]
-
+    def __init__(self, X_user, tracks_list, tracks_vecs, tracks_lookup, device):
         self.device = device
-        
+
         self.X_user = X_user
         self.tracks_list = tracks_list
-        self.tracks_vecs = 
+        self.tracks_vecs = torch.tensor(tracks_vecs, device=self.device)
+        self.tracks_lookup = tracks_lookup
 
 
     def __len__(self):
@@ -85,7 +81,7 @@ class UserTrackDataset():
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
-        x_track_pos = self._tensorify(self.X_track[i])
+        x_track_pos = self._tensorify(self.tracks_vecs[self.tracks_lookup[self.tracks_list[i]]])
         
         j = random.randint(0, len(self)-1)
         
@@ -98,8 +94,7 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        
-        x_track_neg = self._tensorify(self.X_track[j])
+        x_track_neg = self._tensorify(self.tracks_vecs[self.tracks_lookup[self.tracks_list[j]]])
         return x_user, x_track_pos, x_track_neg
 
 class MyModel(RecModel):
@@ -136,7 +131,7 @@ class MyModel(RecModel):
             ]
             sentences.append(sentence)
         
-        n_epochs = 20
+        n_epochs = 1
         self.sentences = sentences
         self.w2v_model = Word2Vec(self.sentences, vector_size=64,  \
                              window=max(map(len,sentences)),  \
@@ -145,8 +140,9 @@ class MyModel(RecModel):
                              min_count=1, \
                              epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
 
-        self.tracks_vectors = np.array([ model.w2v_model.wv[word] for word in model.w2v_model.index_to_key if word.startswith("track=") ])
-        self.tracks_lookup = np.array([ int(word.replace("track=","")) for word in model.w2v_model.index_to_key if word.startswith("track=") ])
+        self.tracks_vectors = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.tracks_reverse_lookup = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.tracks_lookup = { k: v for v, k in enumerate(self.tracks_reverse_lookup )}
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
     
@@ -164,7 +160,7 @@ class MyModel(RecModel):
         n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
-        margin = .75
+        margin = .5
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
