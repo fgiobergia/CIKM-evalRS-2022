@@ -67,13 +67,15 @@ class ContrastiveModel(nn.Module):
         # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
+    def __init__(self, X_user, tracks_list, tracks_vecs, tracks_lookup, device=None):
         assert X_user.shape[0] == X_track.shape[0]
 
-        self.X_user = X_user
-        self.X_track = X_track
-
         self.device = device
+        
+        self.X_user = X_user
+        self.tracks_list = tracks_list
+        self.tracks_vecs = 
+
 
     def __len__(self):
         return self.X_user.shape[0]
@@ -136,12 +138,15 @@ class MyModel(RecModel):
         
         n_epochs = 20
         self.sentences = sentences
-        print(">>>", self.sentences[0])
         self.w2v_model = Word2Vec(self.sentences, vector_size=64,  \
                              window=max(map(len,sentences)),  \
                              workers=8,
                              sg=1, hs=0, negative=5, seed=42, \
+                             min_count=1, \
                              epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
+
+        self.tracks_vectors = np.array([ model.w2v_model.wv[word] for word in model.w2v_model.index_to_key if word.startswith("track=") ])
+        self.tracks_lookup = np.array([ int(word.replace("track=","")) for word in model.w2v_model.index_to_key if word.startswith("track=") ])
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
     
@@ -168,9 +173,9 @@ class MyModel(RecModel):
         self.ohe_tracks = OneHotEncoder(dtype=np.float32)
 
         X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
-        X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
+        # X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        ds = UserTrackDataset(X_users, train_df["track_id"].tolist(), self.tracks_vectors, self.tracks_lookup, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
