@@ -51,7 +51,7 @@ class TrackEncoder(nn.Module):
         return x
 
 class ContrastiveModel(nn.Module):
-    def __init__(self, user_size, track_size, n_dim):
+    def __init__(self, user_size, n_dim):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
     
@@ -174,7 +174,7 @@ class MyModel(RecModel):
         ds = UserTrackDataset(X_users, train_df["track_id"].tolist(), self.tracks_vectors, self.tracks_lookup, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(X_users.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
