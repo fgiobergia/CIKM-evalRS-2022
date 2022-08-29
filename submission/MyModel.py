@@ -49,28 +49,44 @@ class TrackEncoder(nn.Module):
         x = self.fc(x)
         return x
 
+class UserFeaturesEncoder(nn.Module):
+    def __init__(self, in_size, out_size):
+        super().__init__()
+
+        self.fc = nn.Linear(in_size, out_size)
+    
+    def forward(self, x):
+        x = self.fc(x)
+        return x
+
 class ContrastiveModel(nn.Module):
-    def __init__(self, user_size, track_size, n_dim):
+    def __init__(self, user_size, user_features_size, track_size, n_dim):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
         self.track_enc = TrackEncoder(track_size, n_dim)
+        self.user_features_enc = UserFeaturesEncoder(user_features_size, n_dim)
     
-    def forward(self, x_user, x_track_pos, x_track_neg):
+    def forward(self, x_user, x_features_pos, x_features_neg, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
+        x_features_pos = self.user_features_enc(x_features_pos)
+        x_features_neg = self.user_features_enc(x_features_neg)
         x_track_pos = self.track_enc(x_track_pos)
         x_track_neg = self.track_enc(x_track_neg)
 
-        return x_user, x_track_pos, x_track_neg
+        return x_user, x_features_pos, x_features_neg, x_track_pos, x_track_neg
 
         # pos_cos = self.cos(x_user, x_track_pos)
         # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
-        assert X_user.shape[0] == X_track.shape[0]
+    def __init__(self, X_user, X_user_features, users_list, users_lookup, X_track, device=None):
+        print(X_user_features.shape)
 
         self.X_user = X_user
+        self.X_user_features = X_user_features
         self.X_track = X_track
+        self.users_list = users_list
+        self.users_lookup = users_lookup
 
         self.device = device
 
@@ -82,6 +98,7 @@ class UserTrackDataset():
 
     def __getitem__(self, i):
         x_user = self._tensorify(self.X_user[i])
+        x_features_pos = torch.tensor(self.X_user_features[self.users_lookup[self.users_list[i]]], device=self.device)
         x_track_pos = self._tensorify(self.X_track[i])
         
         j = random.randint(0, len(self)-1)
@@ -97,7 +114,8 @@ class UserTrackDataset():
         #         same_user = False
         
         x_track_neg = self._tensorify(self.X_track[j])
-        return x_user, x_track_pos, x_track_neg
+        x_features_neg = torch.tensor(self.X_user_features[self.users_lookup[self.users_list[j]]], device=self.device)
+        return x_user, x_features_pos, x_features_neg, x_track_pos, x_track_neg
 
 class MyModel(RecModel):
 
@@ -129,6 +147,7 @@ class MyModel(RecModel):
         #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
+        self.users_df = users
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -141,11 +160,40 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 3
+        n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
         margin = .5
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
+
+        # users_info_df = train_df.merge(self.users_df, left_on="user_id", right_index=True)
+        users_info_df = self.users_df.fillna(0)
+
+        encoded_vars = ['country', 'age', 'gender',
+                        'novelty_artist_avg_month', 'novelty_artist_avg_6months',
+                        'novelty_artist_avg_year', 'mainstreaminess_avg_month',
+                        'mainstreaminess_avg_6months', 'mainstreaminess_avg_year',
+                        'mainstreaminess_global', 'cnt_listeningevents', 'cnt_distinct_tracks',
+                        'cnt_distinct_artists', 'cnt_listeningevents_per_week',
+                        'relative_le_per_weekday1', 'relative_le_per_weekday2',
+                        'relative_le_per_weekday3', 'relative_le_per_weekday4',
+                        'relative_le_per_weekday5', 'relative_le_per_weekday6',
+                        'relative_le_per_weekday7', 'relative_le_per_hour0',
+                        'relative_le_per_hour1', 'relative_le_per_hour2',
+                        'relative_le_per_hour3', 'relative_le_per_hour4',
+                        'relative_le_per_hour5', 'relative_le_per_hour6',
+                        'relative_le_per_hour7', 'relative_le_per_hour8',
+                        'relative_le_per_hour9', 'relative_le_per_hour10',
+                        'relative_le_per_hour11', 'relative_le_per_hour12',
+                        'relative_le_per_hour13', 'relative_le_per_hour14',
+                        'relative_le_per_hour15', 'relative_le_per_hour16',
+                        'relative_le_per_hour17', 'relative_le_per_hour18',
+                        'relative_le_per_hour19', 'relative_le_per_hour20',
+                        'relative_le_per_hour21', 'relative_le_per_hour22',
+                        'relative_le_per_hour23']
+        users_info_df = pd.get_dummies(users_info_df[encoded_vars])
+        X_user_features = users_info_df.values.astype(np.float32)
+        users_lookup = dict(zip(self.users_df.index, range(len(self.users_df))))
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -155,10 +203,10 @@ class MyModel(RecModel):
         X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
         X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        ds = UserTrackDataset(X_users, X_user_features, train_df["user_id"].tolist(), users_lookup, X_tracks, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(X_users.shape[1], X_user_features.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
@@ -168,22 +216,30 @@ class MyModel(RecModel):
             return func
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
 
+        lmbda = 1.
+
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
+                cum_loss_triplet = 0
+                cum_loss_features = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
+                for i, (x_users, x_features_pos, x_features_neg, x_tracks_pos, x_tracks_neg) in bar:
                     # if i == 50:
                     #     return
                     opt.zero_grad()
-                    anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = loss_func(anchor, pos, neg)
+                    anchor, x_features_pos, x_features_neg, pos, neg = self.cmodel(x_users, x_features_pos, x_features_neg, x_tracks_pos, x_tracks_neg)
+                    loss_triplet = loss_func(anchor, pos, neg)
+                    loss_features = lmbda * loss_func(anchor, x_features_pos, x_features_neg)
+                    loss = loss_triplet + loss_features
                     loss.backward()
                     opt.step()
 
                     cum_loss = cum_loss * alpha + (1-alpha) * loss.item()
-                    bar.set_postfix(loss=cum_loss)
+                    cum_loss_triplet = cum_loss_triplet * alpha + (1-alpha) * loss_triplet.item()
+                    cum_loss_features = cum_loss_features * alpha + (1-alpha) * loss_features.item()
+                    bar.set_postfix(loss=cum_loss, loss_triplet=cum_loss_triplet, loss_features=cum_loss_features)
 
 
     def predict(self, user_ids: pd.DataFrame) -> pd.DataFrame:
