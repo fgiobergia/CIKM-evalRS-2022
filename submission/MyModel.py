@@ -58,8 +58,6 @@ class ContrastiveModel(nn.Module):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
         self.track_enc = TrackEncoder(track_size, n_dim)
-
-        self.cos = nn.CosineSimilarity()
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
@@ -70,8 +68,6 @@ class ContrastiveModel(nn.Module):
 
         # pos_cos = self.cos(x_user, x_track_pos)
         # neg_cos = self.cos(x_user, x_track_neg)
-
-        # return neg_cos - pos_cos
 
 class UserTrackDataset():
     def __init__(self, X_user, tracks_list, tracks_vecs, tracks_lookup, device):
