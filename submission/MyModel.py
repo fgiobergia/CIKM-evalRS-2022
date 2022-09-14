@@ -33,11 +33,13 @@ class UserEncoder(nn.Module):
         super().__init__()
 
         # self.fc = nn.Linear(in_size, out_size)
-        self.emb = nn.Embedding(num_embeddings=in_size, embedding_dim=out_size)
+        # self.emb = nn.Embedding(num_embeddings=in_size, embedding_dim=out_size)
+        self.mat = nn.Parameter(torch.rand((in_size, out_size)))
     
     def forward(self, x):
-        x = self.emb(x)
-        return x.squeeze(1)
+        # x = self.emb(x)
+        # return x.squeeze(1)
+        return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
