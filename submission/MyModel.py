@@ -144,7 +144,7 @@ class MyModel(RecModel):
         n_epochs = 3
         shared_emb_dim = 128
         num_workers = 4
-        margin = .5
+        margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
