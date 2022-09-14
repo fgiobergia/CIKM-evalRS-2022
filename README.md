@@ -29,7 +29,7 @@ Check the [EvalRS website](https://reclist.io/cikm2022-cup/) for the official ti
 
 ## Dataset and target scenario
 
-This Data Challenge is based on the [LFM-1b Dataset, Corpus of Music Listening Events for Music Recommendation](http://www.cp.jku.at/datasets/LFM-1b/). The use case is a typical user-item recommendation scenario: at _predction time_, we have a set of target users to which we need to recommend a set of songs to listen to. To achieve that, we have historical anonymous data on previous music consumptions from users in the same setting.
+This Data Challenge is based on the [LFM-1b Dataset, Corpus of Music Listening Events for Music Recommendation](http://www.cp.jku.at/datasets/LFM-1b/). The use case is a typical user-item recommendation scenario: at _prediction time_, we have a set of target users to which we need to recommend a set of songs to listen to. To achieve that, we have historical anonymous data on previous music consumptions from users in the same setting.
 
 Among all possible datasets, we picked LFM as it suits the spirit and the goal of this Challenge: in particular, thanks to [rich meta-data on users and items](http://www.cp.jku.at/people/schedl/Research/Publications/pdf/schedl_ijmir_2017.pdf), the dataset allows us to test recommender systems among many non-obvious dimensions, on top of standard Information Retrieval Metrics (for the philosophy behind behavioral testing, please refer to the original [RecList paper](https://arxiv.org/abs/2111.09963)).
 
@@ -114,7 +114,7 @@ P.s.: if something in the procedure goes wrong, please contact us through Slack!
 
 ### Fourth Step: Run your code
 
-A valid submission script can be obtained by copying into your repository `submission.py`, and modify `MyModel.py` to use your logic instead of the default (random) one. Your submission is required to build an instance of a `RecModel`, providing an implementation for the `train` and `predict` methods.
+A valid submission script can be obtained by copying into your repository `submission.py`, and modify `submission/MyModel.py` to use your logic instead of the default (random) one. Your submission is required to build an instance of a `RecModel`, providing an implementation for the `train` and `predict` methods.
 
 In the `evaluation` folder, we included a [lenghtier explanation of the evaluation methodology](/evaluation/README.md) involved in this challenge; in the `notebooks` folder, we include a step-by-step, heavily commented guide on how to build a submission, including sample data points and an example of using a derived RecList for evaluation. A [Kaggle notebook](https://www.kaggle.com/code/vinidd/cikm-data-challenge) and a [Colab Notebook](https://colab.research.google.com/drive/1w1fbfCwQKMQNCLbbEF-Qxyin3wE7052T?usp=sharing) are also available. The EDA notebook showcases some important features of the dataset, and provide a start for exploring the problem - the picture below shows music consumption by hour of day for example:
 
@@ -208,7 +208,7 @@ _When the challenge is running_
 _The final submission_
 
 * Before the end of the Challenge, you are required to submit three artifacts to be eligible for the prize: your code, your paper and one (or more) custom tests;
-* your code should be submitted as a Github public repository containing your solution, a `requirements.txt` (or Dockerfile, if your script won't work in a virtual env on top of AWS Deep Learning AMI) and a MIT license (or similar open source license). After building the container, we should be able to run the evaluation loop in your code in the same way we run the example script in this repository (i.e. follow the instructions in this repo to make sure you use `submission.py` properly). Please make sure to state in your README any information useful to run the project. _A successful submission MUST run a full evaluation loop (start-to-submission) on a EC2 p3.2xlarge in less than 60 minutes._ Remember once again that EvalRS is about testing and understanding the problem as much as it is about modelling: we give you a GPU-based time budget, but you are free to use whatever method you prefer. A p3.2xlarge however will run a lot of things faster, ensuring you can experiment with more complex architecture if you desire to do so. As a reference, running the MF model in [evalrs_tutorial_retrieval_models_with_merlin_script.py](notebooks/merlin_tutorial/evalrs_tutorial_retrieval_models_with_merlin_script.py) (inside [notebooks/merlin_tutorial](notebooks/merlin_tutorial/README.md) folder took) 32 minutes on a fresh `p3.2xlarge` (V100 GPU) [with the Deep Learning AMI setup](https://aws.amazon.com/it/machine-learning/amis/). At phase 2, the organizers will provide some working examples / tutorials to further help preparing the final submission;
+* your code should be submitted as a Github public repository containing your solution, a `requirements.txt` (or Dockerfile, if your script won't work in a virtual env on top of AWS Deep Learning AMI) and a MIT license (or similar open source license). After building the container, we should be able to run the evaluation loop in your code in the same way we run the example script in this repository (i.e. follow the instructions in this repo to make sure you use `submission.py` properly). Please make sure to state in your README any information useful to run the project. _A successful submission MUST run a full evaluation loop (start-to-submission) on a EC2 p3.2xlarge in less than 90 minutes._ Remember once again that EvalRS is about testing and understanding the problem as much as it is about modelling: we give you a GPU-based time budget, but you are free to use whatever method you prefer. A p3.2xlarge however will run a lot of things faster, ensuring you can experiment with more complex architecture if you desire to do so. As a reference, running the MF model in [evalrs_tutorial_retrieval_models_with_merlin_script.py](notebooks/merlin_tutorial/evalrs_tutorial_retrieval_models_with_merlin_script.py) (inside [notebooks/merlin_tutorial](notebooks/merlin_tutorial/README.md) folder took) 32 minutes on a fresh `p3.2xlarge` (V100 GPU) [with the Deep Learning AMI setup](https://aws.amazon.com/it/machine-learning/amis/). This [repository](https://github.com/RecList/evalRS-2022-submission-example) contains a walkthrough for running a DL AMI, and a sample submission project;
 * it’s at the sole discretion of the committee to decide whether / how to run the received projects for independent verification of the score; the committee decision is final. Failing to submit a project with the required information will result in the team being disqualified, irrespective of their leaderboard position;
 * irrespective of their leaderboard position, we ask teams to submit _at least a short design paper_ (details below), or a longer one, if they wish to do so. Note that we have a prize specifically geared towards paper quality. The paper (long or short) should detail the testing approach, with reference to literature, the target dataset or the insights gained by having proper testing when iterating on the leaderboard;
 * irrespective of their leaderboard position, we ask teams to submit _at least one new RecTest_ (the tutorial in the `notebooks` folder shows how to successfully extend the given RecList with your tests). Your test may be as simple as a "unit test" around a specific user, or song, or data slice, or as complex as re-using the provided latent space to evaluate robustness or serendipity: make sure to describe motivations and test logic in your paper (short or long). Note that we have a prize specifically geared towards novel tests. A huge motivation for this challenge is to foster a debate around testing, and sharing insights will make the community richer: all the artifacts of the competition are by design built in the open, and we encourage all practitioners to contribute with their ingenuity.
@@ -221,7 +221,9 @@ Given the novelty of the challenges, it is a non-trivial question on how to comb
 
 In the first phase, the leaderboard is a simple average of the scores in each test from our test suite: every time you submit you will receive an e-mail with full scoring details, allowing you to understand the tests and your models in depth. _We encourage you to submit many times and iterate fast in this first phase_. 
 
-We will use the scores collected in phase 1 to push an update to the evaluation script (we will notify everyone in the Slack channel), and then open phase 2, in which the final score will be weighted based on the distribution of individual tests: i.e. if some tests turn out to be easy across teams, their importance will be downplayed. Only the score in the leaderboard at the end of phase 2 are considered for the prizes below. Remember: even in phase 2 you can submit as many times as you like.
+We will use the scores collected in phase 1 to push an update to the evaluation script (we will notify everyone in the Slack channel), and then open phase 2, in which the final score will be weighted based on the distribution of individual tests: i.e. if some tests turn out to be easy across teams, their importance will be downplayed. Only the score in the leaderboard at the end of phase 2 are considered for the prizes below. Remember: even in phase 2 you can submit as many times as you like. 
+
+_Note_: the final implementation for scoring is available in the [repo](https://github.com/RecList/evalRS-CIKM-2022/blob/c09cf24c064695b0432a2b899735c19cd0161399/evaluation/EvalRSRunner.py#L232). We will also add further details about our learnings in an upcoming paper: stay tuned!
 
 Practically, your evaluation routine won't change between the two phases (if not for updating the repo), as all the aggregation logic is handled automatically by our script; however, when moving from phase 1 to phase 2 your model may perform differently on the leaderboard: the second phase of the challenge will give you the chance to optimize the model according to the final weighting scheme, and to understand even better the nature of the testing strategy.
 
@@ -304,10 +306,20 @@ If you find our code, datasets, tests useful in your work, please cite the origi
 _RecList_
 
 ```
-@inproceedings{Chia2021BeyondNB,
-  title={Beyond NDCG: behavioral testing of recommender systems with RecList},
-  author={Patrick John Chia and Jacopo Tagliabue and Federico Bianchi and Chloe He and Brian Ko},
-  year={2021}
+@inproceedings{10.1145/3487553.3524215,
+    author = {Chia, Patrick John and Tagliabue, Jacopo and Bianchi, Federico and He, Chloe and Ko, Brian},
+    title = {Beyond NDCG: Behavioral Testing of Recommender Systems with RecList},
+    year = {2022},
+    isbn = {9781450391306},
+    publisher = {Association for Computing Machinery},
+    address = {New York, NY, USA},
+    url = {https://doi.org/10.1145/3487553.3524215},
+    doi = {10.1145/3487553.3524215},
+    pages = {99–104},
+    numpages = {6},
+    keywords = {recommender systems, open source, behavioral testing},
+    location = {Virtual Event, Lyon, France},
+    series = {WWW '22 Companion}
 }
 ```
 
