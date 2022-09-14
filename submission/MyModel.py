@@ -211,7 +211,7 @@ class MyModel(RecModel):
         
         # X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
 
-        X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
+        X_users = np.array([ self.user_map[i] for i in user_ids["user_id"]]).reshape(-1,1)
         # X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
 
         bs = 1024
@@ -222,8 +222,8 @@ class MyModel(RecModel):
             users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
 
             print("Loading tracks embeddings")
-            tracks_list = np.array(self.known_tracks).reshape(-1,1)
-            X_tracks = np.array([ self.track_map[i] for i in tracks_list]).reshape(-1,1)
+            # tracks_list = np.array(self.known_tracks).reshape(-1,1)
+            X_tracks = np.array([ self.track_map[i] for i in self.known_tracks]).reshape(-1,1)
             tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
         finally:
             self.cmodel.train()
