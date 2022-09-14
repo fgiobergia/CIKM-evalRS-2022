@@ -48,9 +48,12 @@ class TrackEncoder(nn.Module):
         super().__init__()
 
         self.fc = nn.Linear(in_size, out_size)
+        self.fc2 = nn.Linear(out_size, out_size)
     
     def forward(self, x):
         x = self.fc(x)
+        x = torch.relu(x)
+        x = self.fc2(x)
         return x
 
 class ContrastiveModel(nn.Module):
@@ -189,7 +192,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 1
+        n_epochs = 15
         shared_emb_dim = 128
         num_workers = 4
         margin = .75
