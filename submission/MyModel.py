@@ -37,7 +37,7 @@ class UserEncoder(nn.Module):
     
     def forward(self, x):
         x = self.emb(x)
-        return x.squeeze()
+        return x.squeeze(1)
 
 
 class TrackEncoder(nn.Module):
@@ -49,7 +49,7 @@ class TrackEncoder(nn.Module):
     
     def forward(self, x):
         x = self.emb(x)
-        return x.squeeze()
+        return x.squeeze(1)
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
@@ -78,9 +78,6 @@ class UserTrackDataset():
 
     def __len__(self):
         return self.X_user.shape[0]
-    
-    def _tensorify(self, x):
-        return torch.tensor(x, device=self.device).flatten()
 
     def __getitem__(self, i):
         x_user = self.X_user[i]
@@ -166,6 +163,9 @@ class MyModel(RecModel):
         # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
+
+        self.X_users = X_users
+        self.X_tracks = X_tracks
 
         ds = UserTrackDataset(X_users, X_tracks, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
