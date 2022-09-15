@@ -36,7 +36,7 @@ if __name__ == '__main__':
     print('\n\n==== Loading dataset at: {} ====\n'.format(datetime.utcnow()))
     # this will load the dataset with the default values for the challenge
     dataset = ChallengeDataset(num_folds=1)
-    #dataset = ChallengeDataset()
+    # dataset = ChallengeDataset()
     print('\n\n==== Init runner at: {} ====\n'.format(datetime.utcnow()))
     # run the evaluation loop
     runner = EvalRSRunner(

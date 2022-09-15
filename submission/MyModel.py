@@ -32,13 +32,10 @@ class UserEncoder(nn.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
 
-        # self.fc = nn.Linear(in_size, out_size)
-        # self.emb = nn.Embedding(num_embeddings=in_size, embedding_dim=out_size)
-        self.mat = nn.Parameter(torch.rand((in_size, out_size)))
+        k = 1 / (in_size ** .5)
+        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        # x = self.emb(x)
-        # return x.squeeze(1)
         return self.mat[x.flatten()]
 
 
@@ -46,12 +43,11 @@ class TrackEncoder(nn.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
 
-        # self.fc = nn.Linear(in_size, out_size)
-        self.emb = nn.Embedding(num_embeddings=in_size, embedding_dim=out_size)
+        k = 1 / (in_size ** .5)
+        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        x = self.emb(x)
-        return x.squeeze(1)
+        return self.mat[x.flatten()]
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
@@ -142,7 +138,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 3
+        n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
         margin = .75
