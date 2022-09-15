@@ -95,7 +95,7 @@ class UserTrackDataset():
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
-        self.w = w
+        self.w = torch.tensor(w, device=self.device)
 
     def __len__(self):
         return self.X_user.shape[0]
@@ -116,7 +116,7 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        return x_user, x_track_pos, x_track_neg, torch.tensor(self.w[i], device=self.device)
+        return x_user, x_track_pos, x_track_neg, self.w[i]
 
 class MyModel(RecModel):
 
@@ -192,7 +192,7 @@ class MyModel(RecModel):
 
         # artists_weights = get_artists_weight(train_df)
         gender_weights = get_gender_weight(train_df, self.users_df)
-        ds = UserTrackDataset(X_users, X_tracks, gender_weights.tolist())
+        ds = UserTrackDataset(X_users, X_tracks, gender_weights.tolist(), self.device)
 
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
@@ -204,7 +204,7 @@ class MyModel(RecModel):
             def func(*args, **kwargs):
                 return 1 - cossim(*args, **kwargs)
             return func
-        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
+        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist(), reduction="none")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
@@ -216,7 +216,7 @@ class MyModel(RecModel):
                     #     return
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = w * loss_func(anchor, pos, neg)
+                    loss = (w * loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
