@@ -7,6 +7,7 @@
     Please refer to the README for more details and check submission.py for a sample implementation.
 
 """
+from dataclasses import dataclass
 import os
 import inspect
 import hashlib
@@ -119,9 +120,9 @@ class ChallengeDataset:
 
     def _generate_folds(self, num_folds: int, seed: int, frac=0.25) -> (pd.DataFrame, pd.DataFrame):
 
-        fold_ids = [(self.unique_user_ids_df.sample(frac=frac)
+        fold_ids = [(self.unique_user_ids_df.sample(frac=frac, random_state=seed+_)
                      .reset_index(drop=True)
-                     .rename({'user_id': _}, axis=1)) for _ in range(4)]
+                     .rename({'user_id': _}, axis=1)) for _ in range(num_folds)]
         # in theory all users should have at least 10 interactions
         df_fold_user_ids = pd.concat(fold_ids, axis=1)
 
@@ -136,7 +137,10 @@ class ChallengeDataset:
             df_fold_events = df_fold_events[df_fold_events['track_id'].isin(valid_track_ids)]
 
             df_groupby = df_fold_events.groupby(by='user_id', as_index=False)
-            df_test = df_groupby.sample(n=1, random_state=seed)[['user_id', 'track_id']]
+
+            subset_of_cols_to_return = ['user_id', 'track_id']
+
+            df_test = df_groupby.sample(n=1, random_state=seed)[subset_of_cols_to_return]
             df_test['fold'] = fold
             df_train = df_fold_events.index.difference(df_test.index).to_frame(name='index')
             df_train['fold'] = fold
@@ -166,8 +170,10 @@ class ChallengeDataset:
         return self.df_events.loc[train_index]
 
     def _get_test_set(self, fold: int, limit: int = None, seed: int =0) -> pd.DataFrame:
+        subset_of_cols_to_return = ['user_id', 'track_id']
+
         assert fold <= self._test_set['fold'].max()
-        test_set = self._test_set[self._test_set['fold'] == fold][['user_id', 'track_id']]
+        test_set = self._test_set[self._test_set['fold'] == fold][subset_of_cols_to_return]
         if limit:
             return test_set.sample(n=limit, random_state=seed)
         else:
@@ -196,7 +202,7 @@ class EvalRSRunner:
         self._folds = None
         self.model = None
         self.dataset = dataset
-        self.secret = 4
+        self.secret = 1069576388
 
         resp = requests.get(url="https://raw.githubusercontent.com/RecList/evalRS-CIKM-2022/main/secret.json")
         data = resp.json()
@@ -225,7 +231,58 @@ class EvalRSRunner:
 
     # simple mean for now
     def _aggregate_scores(self, agg_test_results: dict) -> float:
-        return np.mean(list(agg_test_results.values()))
+        """Aggregate scores on individual tests.
+
+        Here, we consider the following tests:
+        'HIT_RATE', 'MRR', 'MRED_COUNTRY', 'MRED_USER_ACTIVITY',
+        'MRED_TRACK_POPULARITY','MRED_ARTIST_POPULARITY',
+        'MRED_GENDER', 'BEING_LESS_WRONG', 'LATENT_DIVERSITY' 
+
+        The function returns:
+
+        - leaderboard_score: phase 2 score. It is computed normalizing each test score as
+            the relative performance between a chosen baseline and the best results among
+            submissions in Phase 1. Here, we use the official CBOW baseline.
+            Note that if the submission does not meet the minimum requirements for HR@100
+            and MRR, this score is set to 0.
+
+        - p1_score: score assigned using the logic during phase 1. Use this score just 
+            for reference with scores in phase 1. WE WILL NOT USE THIS SCORE IN PHASE 2.
+        """
+        p1_score = np.mean(list(agg_test_results.values()))
+        reference = PhaseOne()
+        
+        # Check if submission meets minimum reqs
+        if agg_test_results["HIT_RATE"] < reference.HR_THRESHOLD:
+            return -100.0, p1_score
+        
+        normalized_scores = dict()
+        for test in LEADERBOARD_TESTS:
+            normalized_scores[test] = (
+                agg_test_results[test] - reference.baseline[test]
+            ) / (reference.best[test] - reference.baseline[test])
+
+        # Computing meta-scores
+        # Performance
+        ms_perf = (normalized_scores["HIT_RATE"] + normalized_scores["MRR"]) / 2
+        #Fairness / Slicing
+        ms_fair = (
+            normalized_scores["MRED_COUNTRY"] +
+            normalized_scores["MRED_USER_ACTIVITY"] +
+            normalized_scores["MRED_TRACK_POPULARITY"] +
+            normalized_scores["MRED_ARTIST_POPULARITY"] +
+            normalized_scores["MRED_GENDER"]
+        ) / 5
+        # Behavioral
+        ms_behav = (
+            normalized_scores["BEING_LESS_WRONG"] + normalized_scores["LATENT_DIVERSITY"]
+        ) / 2
+
+        # Meta-scores weights
+        w = 1, 1.5, 1.5
+        leaderboard_score = (w[0] * ms_perf + w[1] * ms_fair + w[2] * ms_behav) / sum(w)
+        
+        return leaderboard_score, p1_score
 
     def evaluate(
             self,
@@ -241,6 +298,8 @@ class EvalRSRunner:
     ):
         if debug:
             print('\nBegin Evaluation... ')
+            start = time.time()
+
         self._random_state = int(time.time()) if not seed else seed
         self.model = model
 
@@ -294,7 +353,7 @@ class EvalRSRunner:
         # compute means for each test over fold
         agg_results = {test: np.mean(res) for test, res in fold_results.items()}
         # generate single score
-        leaderboard_score = self._aggregate_scores(agg_results)
+        leaderboard_score, p1_score = self._aggregate_scores(agg_results)
         print("LEADERBOARD SCORE : {}".format(leaderboard_score))
 
         # TODO: CI computation ?
@@ -304,6 +363,7 @@ class EvalRSRunner:
             'results': agg_results,
             'hash': hash(self),
             'secret': self.secret,
+            'phase_one_score': p1_score,
             'SCORE': leaderboard_score
         }
 
@@ -318,6 +378,9 @@ class EvalRSRunner:
                                   aws_secret_access_key=self.aws_secret_access_key,
                                   participant_id=self.participant_id,
                                   bucket_name=self.bucket_name)
+        if debug:
+            time_for_submission = (time.time() - start)/60
+            print(f"Entire Process Duration: {time_for_submission} Minutes")
 
     def __hash__(self):
         hash_inputs = [
@@ -336,3 +399,41 @@ class EvalRSRunner:
         hash_input = '_'.join([str(_) for _ in hash_inputs])
         return int(hashlib.sha256(hash_input.encode()).hexdigest(), 16)
 
+
+@dataclass
+class PhaseOne:
+
+    @property
+    def baseline(self):
+        return self._CBOW_SCORES
+
+    @property
+    def best(self):
+        return self._BEST_SCORE_P1
+
+    HR_THRESHOLD = 0.015  # ~ 20% below CBOW HIT RATE
+    MRR_THRESHOLD = 1e-5
+
+    _CBOW_SCORES = {
+        "HIT_RATE": 0.018763,
+        "MRR": 0.001654,
+        "MRED_COUNTRY": -0.006944,
+        "MRED_USER_ACTIVITY": -0.012460,
+        "MRED_TRACK_POPULARITY": -0.006816,
+        "MRED_ARTIST_POPULARITY": -0.003915,
+        "MRED_GENDER": -0.004354,
+        "BEING_LESS_WRONG": 0.2744871, # Original score (0.322926) decreased by 15%
+        "LATENT_DIVERSITY": -0.324706
+    }
+
+    _BEST_SCORE_P1 = {
+        "HIT_RATE": 0.264642,
+        "MRR": 0.067493,
+        "MRED_COUNTRY": -0.004490,
+        "MRED_USER_ACTIVITY": -0.006922,
+        "MRED_TRACK_POPULARITY": -0.005865,
+        "MRED_ARTIST_POPULARITY": -0.003623,
+        "MRED_GENDER": -0.000032,
+        "BEING_LESS_WRONG": 0.40635,
+        "LATENT_DIVERSITY": -0.202812
+    }

@@ -100,7 +100,7 @@ class EvalRSRecList(RecList):
 
     @rec_test('MRED_USER_ACTIVITY')
     def mred_user_activity(self):
-        bins = np.array([10,100,1000,10000])
+        bins = np.array([1, 100, 1000])
         user_activity = self._x_train[self._x_train['user_id'].isin(self._y_test.index)]
         user_activity = user_activity.groupby('user_id',as_index=True, sort=False)[['user_track_count']].sum()
         user_activity = user_activity.loc[self._y_test.index]
@@ -112,7 +112,7 @@ class EvalRSRecList(RecList):
 
     @rec_test('MRED_TRACK_POPULARITY')
     def mred_track_popularity(self):
-        bins = np.array([10, 100, 1000, 10000, 100000])
+        bins = np.array([1, 10, 100, 1000])
         track_id = self._y_test['track_id']
         track_activity = self._x_train[self._x_train['track_id'].isin(track_id)]
         track_activity = track_activity.groupby('track_id', as_index=True, sort=False)[['user_track_count']].sum()
@@ -125,7 +125,7 @@ class EvalRSRecList(RecList):
 
     @rec_test('MRED_ARTIST_POPULARITY')
     def mred_artist_popularity(self):
-        bins = np.array([10, 100, 1000, 10000, 100000])
+        bins = np.array([1, 100, 1000, 10000])
         artist_id = self.product_data['items'].loc[self._y_test['track_id'], 'artist_id']
         artist_activity = self._x_train[self._x_train['artist_id'].isin(artist_id)]
         artist_activity = artist_activity.groupby('artist_id', as_index=True, sort=False)[['user_track_count']].sum()

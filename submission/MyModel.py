@@ -55,65 +55,57 @@ class UserEncoder(nn.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
 
-        self.fc = nn.Linear(in_size, out_size)
+        k = 1 / (in_size ** .5)
+        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        x = self.fc(x)
-        return x
+        return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
     def __init__(self, in_size, out_size):
         super().__init__()
 
-        self.fc = nn.Linear(in_size, out_size)
+        k = 1 / (in_size ** .5)
+        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        x = self.fc(x)
-        return x
+        return self.mat[x.flatten()]
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
         self.track_enc = TrackEncoder(track_size, n_dim)
-
-        self.cos = nn.CosineSimilarity()
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
         x_track_pos = self.track_enc(x_track_pos)
         x_track_neg = self.track_enc(x_track_neg)
 
-        pos_cos = self.cos(x_user, x_track_pos)
-        neg_cos = self.cos(x_user, x_track_neg)
+        return x_user, x_track_pos, x_track_neg
 
-        return neg_cos - pos_cos
+        # pos_cos = self.cos(x_user, x_track_pos)
+        # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
     def __init__(self, X_user, X_track, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
+        self.device = device
 
-        self.X_user = X_user
-        self.X_track = X_track
+        self.X_user = torch.tensor(X_user, device=self.device)
+        self.X_track = torch.tensor(X_track, device=self.device)
         self.w = w
-
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
 
     def __len__(self):
         return self.X_user.shape[0]
-    
-    def _tensorify(self, x):
-        return torch.tensor(x.todense(), device=self.device).flatten()
 
     def __getitem__(self, i):
-        x_user = self._tensorify(self.X_user[i])
-        x_track_pos = self._tensorify(self.X_track[i])
-        
+        x_user = self.X_user[i]
+        x_track_pos = self.X_track[i]
         j = random.randint(0, len(self)-1)
+        x_track_neg = self.X_track[j]
+        
         
         # The approach below searches for a guaranteed negative sample
         # (i.e. make sure that the sample actually belongs to some other user).
@@ -124,15 +116,13 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        
-        x_track_neg = self._tensorify(self.X_track[j])
         return x_user, x_track_pos, x_track_neg, torch.tensor(self.w[i], device=self.device)
 
 class MyModel(RecModel):
 
     def __init__(self, tracks: pd.DataFrame, users: pd.DataFrame, top_k : int = 100, **kwargs):
         try:
-            torch.multiprocessing.set_start_method('spawn')# good solution !!!!
+            torch.multiprocessing.set_start_method('spawn')
         except:
             pass
         self.top_k = top_k
@@ -176,22 +166,45 @@ class MyModel(RecModel):
         n_epochs = 1
         shared_emb_dim = 128
         num_workers = 4
+        margin = .75
+        print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.ohe_users = OneHotEncoder(dtype=np.float32)
-        self.ohe_tracks = OneHotEncoder(dtype=np.float32)
+        # self.ohe_users = OneHotEncoder(dtype=np.float32)
+        # self.ohe_tracks = OneHotEncoder(dtype=np.float32)
 
-        X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
-        X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
+        # X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
+        # X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
+
+        self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
+        self.rev_user_map = { k: v for v,k in self.user_map.items() }
+        self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
+        self.rev_track_map = { k: v for v,k in self.track_map.items() }
+
+        # X_users = train_df["user_id"].values.reshape(-1,1)
+        # X_tracks = train_df["track_id"].values.reshape(-1,1)
+        X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
+        X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
+
+        self.X_users = X_users
+        self.X_tracks = X_tracks
 
         # artists_weights = get_artists_weight(train_df)
         gender_weights = get_gender_weight(train_df, self.users_df)
         ds = UserTrackDataset(X_users, X_tracks, gender_weights.tolist())
+
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(X_users.shape[1], X_tracks.shape[1], shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
+
+        def cos_dist():
+            cossim = nn.CosineSimilarity()
+            def func(*args, **kwargs):
+                return 1 - cossim(*args, **kwargs)
+            return func
+        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
@@ -202,7 +215,8 @@ class MyModel(RecModel):
                     # if i == 50:
                     #     return
                     opt.zero_grad()
-                    loss = (w * self.cmodel(x_users, x_tracks_pos, x_tracks_neg)).mean()
+                    anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
+                    loss = w * loss_func(anchor, pos, neg)
                     loss.backward()
                     opt.step()
 
@@ -221,18 +235,22 @@ class MyModel(RecModel):
         
         """
         
-        X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
+        # X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
+
+        X_users = np.array([ self.user_map[i] for i in user_ids["user_id"]]).reshape(-1,1)
+        # X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
+
         bs = 1024
 
         try:
             self.cmodel.eval()
             print("Loading user embeddings")
-            users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs].todense()).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
+            users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
 
             print("Loading tracks embeddings")
-            tracks_list = np.array(self.known_tracks).reshape(-1,1)
-            X_tracks = self.ohe_tracks.transform(tracks_list)
-            tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs].todense()).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
+            # tracks_list = np.array(self.known_tracks).reshape(-1,1)
+            X_tracks = np.array([ self.track_map[i] for i in self.known_tracks]).reshape(-1,1)
+            tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
         finally:
             self.cmodel.train()
 
