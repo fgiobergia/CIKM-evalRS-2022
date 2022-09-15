@@ -139,7 +139,7 @@ class MyModel(RecModel):
         
         batch_size = 512
         n_epochs = 1
-        shared_emb_dim = 128
+        shared_emb_dim = 256
         num_workers = 4
         margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
