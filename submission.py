@@ -35,7 +35,7 @@ if __name__ == '__main__':
     # load the dataset
     print('\n\n==== Loading dataset at: {} ====\n'.format(datetime.utcnow()))
     # this will load the dataset with the default values for the challenge
-    dataset = ChallengeDataset(seed=44, num_folds=1)
+    dataset = ChallengeDataset(seed=45, num_folds=1)
     # dataset = ChallengeDataset()
     print('\n\n==== Init runner at: {} ====\n'.format(datetime.utcnow()))
     # run the evaluation loop

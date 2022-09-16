@@ -22,7 +22,7 @@ def get_track_rel_weight(train_df, trait):
     else:
         gb = train_df.groupby(trait).size()
     ndx = gb.index.tolist()
-    weights = 1/gb.values
+    weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
 
@@ -33,7 +33,10 @@ def get_user_rel_weight(train_df, users_df, trait):
     # train in ["gender", "country"]
     gb = users_df.fillna("n").groupby(trait).size()
     ndx = gb.index.tolist()
-    weights = 1/gb.values
+    if trait == "gender":
+        weights = 1/gb.values
+    else:
+        weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
 
@@ -118,12 +121,13 @@ class ContrastiveModel(nn.Module):
         # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, w, device=None):
+    def __init__(self, X_user, X_track, X_plays, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
         self.device = device
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
+        self.X_plays = torch.tensor(X_plays, device=self.device)
         self.w = torch.tensor(w, device=self.device)
 
     def __len__(self):
@@ -145,7 +149,7 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        return x_user, x_track_pos, x_track_neg, self.w[i]
+        return x_user, x_track_pos, x_track_neg, self.w[i], self.X_plays[i]
 
 class MyModel(RecModel):
 
@@ -218,6 +222,8 @@ class MyModel(RecModel):
         # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
+        X_plays = np.log(train_df["user_track_count"].values.reshape(-1,1))
+        X_plays = X_plays/X_plays.max()
 
         self.X_users = X_users
         self.X_tracks = X_tracks
@@ -229,10 +235,10 @@ class MyModel(RecModel):
             # "gender": 1.5,
             # "country": 1,
             # "user_track_count": 1,
-            "artist_id": 1.5,
-            "track_id": .75,
-            "gender": 1.5,
-            "country": 1,
+            "artist_id": 1.,
+            "track_id": 1.,
+            "gender": 1.,
+            "country": 1.,
             "user_track_count": 1.,
         }
         print(l)
@@ -243,7 +249,7 @@ class MyModel(RecModel):
                   get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
 
 
-        ds = UserTrackDataset(X_users, X_tracks, weights.tolist(), self.device)
+        ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
 
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
@@ -262,9 +268,7 @@ class MyModel(RecModel):
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg, w) in bar:
-                    # if i == 50:
-                    #     return
+                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
                     loss = (w * loss_func(anchor, pos, neg)).mean()
