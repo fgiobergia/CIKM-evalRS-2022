@@ -14,6 +14,35 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+
+def get_track_rel_weight(train_df, trait):
+    # trait: artist_id, track_id, user_track_count
+    if trait == "user_track_count":
+        gb = train_df.groupby("user_id")["user_track_count"].sum()
+    else:
+        gb = train_df.groupby(trait).size()
+    ndx = gb.index.tolist()
+    weights = 1/gb.values
+    # weights = (weights - weights.min()) / (weights.max() - weights.min())
+    weights = weights / weights.sum()
+
+    mapper = dict(zip(ndx, weights))
+    return train_df[trait if trait != "user_track_count" else "user_id"].map(mapper.get)
+
+def get_user_rel_weight(train_df, users_df, trait):
+    # train in ["gender", "country"]
+    gb = users_df.fillna("n").groupby(trait).size()
+    ndx = gb.index.tolist()
+    weights = 1/gb.values
+    # weights = (weights - weights.min()) / (weights.max() - weights.min())
+    weights = weights / weights.sum()
+
+    mapper = dict(zip(ndx, weights))
+    df_merged = train_df.merge(users_df.fillna("n"), left_on="user_id", right_index=True)
+    return df_merged[trait].map(mapper.get)
+
+
+
 def get_artists_weight(train_df, n_bins=10):
     gb = train_df.groupby("track_id").size()
     artists = gb.index.tolist()
@@ -121,6 +150,9 @@ class UserTrackDataset():
 class MyModel(RecModel):
 
     def __init__(self, tracks: pd.DataFrame, users: pd.DataFrame, top_k : int = 100, **kwargs):
+        random.seed(42)
+        torch.manual_seed(42)
+        np.random.seed(42)
         try:
             torch.multiprocessing.set_start_method('spawn')
         except:
@@ -163,7 +195,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 1
+        n_epochs = 2
         shared_emb_dim = 128
         num_workers = 4
         margin = .75
@@ -190,9 +222,28 @@ class MyModel(RecModel):
         self.X_users = X_users
         self.X_tracks = X_tracks
 
-        # artists_weights = get_artists_weight(train_df)
-        gender_weights = get_gender_weight(train_df, self.users_df)
-        ds = UserTrackDataset(X_users, X_tracks, gender_weights.tolist(), self.device)
+        l = {
+            # .7246
+            # "artist_id": 1.5,
+            # "track_id": .75,
+            # "gender": 1.5,
+            # "country": 1,
+            # "user_track_count": 1,
+            "artist_id": 1.5,
+            "track_id": .75,
+            "gender": 1.5,
+            "country": 1,
+            "user_track_count": 1.,
+        }
+        print(l)
+        weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
+                  get_track_rel_weight(train_df, "track_id") * l["track_id"] + \
+                  get_track_rel_weight(train_df, "user_track_count") * l["user_track_count"] + \
+                  get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
+                  get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
+
+
+        ds = UserTrackDataset(X_users, X_tracks, weights.tolist(), self.device)
 
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
