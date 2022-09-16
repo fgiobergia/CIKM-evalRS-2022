@@ -65,6 +65,24 @@ class ContrastiveModel(nn.Module):
         # pos_cos = self.cos(x_user, x_track_pos)
         # neg_cos = self.cos(x_user, x_track_neg)
 
+class TracksDataset():
+    def __init__(self, tracks, device="cuda"):
+        self.auths = { auth_id: torch.tensor(df["track_id_mapped"].tolist(),device=device).long() for auth_id, df in tracks.groupby("artist_id") }
+        self.tracks = torch.tensor(tracks[["track_id_mapped", "artist_id"]].values, device=device).long()
+        self.device = device
+
+    def __len__(self):
+        return len(self.tracks)
+    
+    def __getitem__(self, i):
+        x_anchor = self.tracks[i,0]
+        i_pos = np.random.randint(0, len(self.auths[self.tracks[i,1].item()])-1)
+        x_pos = self.auths[self.tracks[i,1].item()][i_pos]
+        k = np.random.choice(list(self.auths.keys()))
+        i_neg = np.random.randint(0, len(self.auths[k])-1)
+        x_neg = self.auths[k][i_neg]
+        return x_anchor, x_pos, x_neg
+
 class UserTrackDataset():
     def __init__(self, X_user, X_track, device=None):
         assert X_user.shape[0] == X_track.shape[0]
@@ -165,9 +183,6 @@ class MyModel(RecModel):
         self.X_users = X_users
         self.X_tracks = X_tracks
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
@@ -178,14 +193,41 @@ class MyModel(RecModel):
             return func
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
 
+        # # Do some pretraining
+        # n_epochs_pretrain = 2
+        # print("Performing", n_epochs_pretrain, "pretraining epochs")
+        # train_df["track_id_mapped"] = train_df["track_id"].map(self.track_map.get)
+        # ds_tracks = TracksDataset(train_df, self.device)
+        # dl_tracks = DataLoader(ds_tracks, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        # for epoch in range(n_epochs_pretrain):
+        #     print(f"Epoch {epoch+1}/{n_epochs_pretrain}")
+        #     with tqdm(enumerate(dl_tracks), total=len(dl_tracks)) as bar:
+        #         cum_loss = 0
+        #         alpha = .8 # damp
+        #         for i, (x_tracks_anchor, x_tracks_pos, x_tracks_neg) in bar:
+        #             opt.zero_grad()
+        #             anchor = self.cmodel.track_enc(x_tracks_anchor)
+        #             pos = self.cmodel.track_enc(x_tracks_pos)
+        #             neg = self.cmodel.track_enc(x_tracks_neg)
+        #             loss = loss_func(anchor, pos, neg)
+        #             loss.backward()
+        #             opt.step()
+
+        #             cum_loss = cum_loss * alpha + (1-alpha) * loss.item()
+        #             bar.set_postfix(loss=cum_loss)
+
+
+
+        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+
+
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
                 for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
-                    # if i == 50:
-                    #     return
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
                     loss = loss_func(anchor, pos, neg)
