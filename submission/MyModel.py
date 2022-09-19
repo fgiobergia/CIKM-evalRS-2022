@@ -38,6 +38,9 @@ class UserEncoder(nn.Module):
     def forward(self, x):
         return self.mat[x.flatten()]
 
+def sort_by_order(origin, seq):
+    pos_map = { k: v for v, k in enumerate(origin) }
+    return sorted(seq, key=pos_map.get)
 
 class TrackEncoder(nn.Module):
     def __init__(self, in_size, out_size):
@@ -184,8 +187,6 @@ class MyModel(RecModel):
                 cum_loss = 0
                 alpha = .8 # damp
                 for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
-                    # if i == 50:
-                    #     return
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
                     loss = loss_func(anchor, pos, neg)
@@ -253,19 +254,30 @@ class MyModel(RecModel):
             for user, grp in self.train_df.groupby("user_id"):
                 known_likes[user] = set(grp["track_id"])
 
+            horizon = 5
             with tqdm(range(cos_mat.shape[0])) as bar:
                 for i in bar:
-                    curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
+                    curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])
 
                     parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
                     cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                    chosen = []
+                    chosen = np.zeros(self.top_k * horizon)
                     j = 0
-                    while len(chosen) < self.top_k:
+                    k = 0
+                    while k < self.top_k * horizon:
                         if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                            chosen.append(cos_mat_sub[j])
+                            # chosen.append(cos_mat_sub[j])
+                            chosen[k] = cos_mat_sub[j]
+                            k += 1
                         j += 1
-                    results[i] = chosen
+
+                    p = 1/(1+np.arange(len(chosen)))
+                    p = p / p.sum()
+                    subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
+                    
+                    results[i] = chosen[subset] #sort_by_order(chosen, subset)
+
+
             preds = results
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
