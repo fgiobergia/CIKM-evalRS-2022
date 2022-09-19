@@ -14,6 +14,58 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+
+def get_track_rel_weight(train_df, trait):
+    # trait: artist_id, track_id, user_id
+    gb = train_df.groupby(trait)["user_track_count"].sum()
+    ndx = gb.index.tolist()
+    weights = np.log(gb.values+1)
+    # weights = (weights - weights.min()) / (weights.max() - weights.min())
+    weights = weights / weights.max()
+
+    mapper = dict(zip(ndx, weights))
+    return train_df[trait].map(mapper.get)
+
+def get_user_rel_weight(train_df, users_df, trait):
+    # train in ["gender", "country"]
+    gb = users_df.fillna("n").groupby(trait).size()
+    ndx = gb.index.tolist()
+    if trait == "gender":
+        weights = gb.values
+    else:
+        weights = np.log(gb.values+1)
+    # weights = (weights - weights.min()) / (weights.max() - weights.min())
+    weights = weights / weights.sum()
+
+    mapper = dict(zip(ndx, weights))
+    df_merged = train_df.merge(users_df.fillna("n"), left_on="user_id", right_index=True)
+    return df_merged[trait].map(mapper.get)
+
+
+
+def get_artists_weight(train_df, n_bins=10):
+    gb = train_df.groupby("track_id").size()
+    artists = gb.index.tolist()
+    counts = gb.tolist()
+
+    bins = np.logspace(np.log10(min(counts)), np.log10(max(counts)), n_bins, base=10)
+    bins[-1]+=1
+
+    weights = np.histogram(counts, bins=bins)[0]
+    weights = weights/weights.sum()
+
+    mapper = dict(zip(artists, weights[np.digitize(counts, bins=bins)-1]))
+    return train_df["track_id"].map(mapper.get)
+
+def get_gender_weight(train_df, users_df):
+    gb = users_df.fillna("n").groupby("gender").size()
+    genders = gb.index.tolist()
+    weights = 1/gb.values
+    weights = weights / weights.sum()
+    gender_weights = dict(zip(genders, weights))
+    users_lookup = dict(zip(users_df.index, users_df["gender"].fillna("n").map(gender_weights.get)))
+    return train_df["user_id"].map(users_lookup.get)
+
 # class EpochLogger(CallbackAny2Vec):
 #     '''Callback to log information about training'''
 #     def __init__(self, n_epochs):
@@ -69,13 +121,14 @@ class ContrastiveModel(nn.Module):
         # neg_cos = self.cos(x_user, x_track_neg)
 
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
+    def __init__(self, X_user, X_track, X_plays, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
         self.device = device
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
-
+        self.X_plays = torch.tensor(X_plays, device=self.device)
+        self.w = torch.tensor(w, device=self.device)
 
     def __len__(self):
         return self.X_user.shape[0]
@@ -96,12 +149,14 @@ class UserTrackDataset():
         #     j = random.randint(0, len(self)-1)
         #     if (self.X_user[j] != self.X_user[i]).todense().any():
         #         same_user = False
-        
-        return x_user, x_track_pos, x_track_neg
+        return x_user, x_track_pos, x_track_neg, self.w[i], self.X_plays[i]
 
 class MyModel(RecModel):
 
     def __init__(self, tracks: pd.DataFrame, users: pd.DataFrame, top_k : int = 100, **kwargs):
+        random.seed(42)
+        torch.manual_seed(42)
+        np.random.seed(42)
         try:
             torch.multiprocessing.set_start_method('spawn')
         except:
@@ -129,6 +184,9 @@ class MyModel(RecModel):
         #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
+        self.users_df = users
+
+
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -141,7 +199,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 1
+        n_epochs = 2
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -164,11 +222,35 @@ class MyModel(RecModel):
         # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
+        X_plays = np.log(train_df["user_track_count"].values.reshape(-1,1))
+        X_plays = X_plays/X_plays.max()
 
         self.X_users = X_users
         self.X_tracks = X_tracks
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        l = {
+            # .7246
+            # "artist_id": 1.5,
+            # "track_id": .75,
+            # "gender": 1.5,
+            # "country": 1,
+            # "user_track_count": 1,
+            "artist_id": 1.,
+            "track_id": 0.,
+            "gender": 1.,
+            "country": 0.,
+            "user_id": 1.,
+        }
+        print(l)
+        weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
+                  get_track_rel_weight(train_df, "track_id") * l["track_id"] + \
+                  get_track_rel_weight(train_df, "user_id") * l["user_id"] + \
+                  get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
+                  get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
+
+
+        ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
+
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
@@ -179,17 +261,17 @@ class MyModel(RecModel):
             def func(*args, **kwargs):
                 return 1 - cossim(*args, **kwargs)
             return func
-        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
+        loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist(), reduction="none")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
+                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = loss_func(anchor, pos, neg)
+                    loss = (w * loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
@@ -236,20 +318,10 @@ class MyModel(RecModel):
 
         print("Sorting similarities")
 
-        include_known_tracks = False
-
         known_tracks_array = np.array(self.known_tracks)
         assert len(user_ids) == cos_mat.shape[0]
         results = np.zeros((len(user_ids), self.top_k), dtype=int)
 
-        if include_known_tracks:
-            bs = 8
-            with tqdm(range(cos_mat.shape[0] // bs + 1)) as bar:
-                for i in bar:
-                    cos_mat_sub = np.argsort(-cos_mat[i*bs:(i+1)*bs], axis=1)[:, :self.top_k]
-                    results[i*bs:(i+1)*bs] = cos_mat_sub
-            preds = known_tracks_array[results]
-        else:
             known_likes = {}
             for user, grp in self.train_df.groupby("user_id"):
                 known_likes[user] = set(grp["track_id"])
@@ -279,6 +351,7 @@ class MyModel(RecModel):
 
 
             preds = results
+
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
 
