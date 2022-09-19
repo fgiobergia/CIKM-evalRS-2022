@@ -16,27 +16,24 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 def get_track_rel_weight(train_df, trait):
-    # trait: artist_id, track_id, user_track_count
-    if trait == "user_track_count":
-        gb = train_df.groupby("user_id")["user_track_count"].sum()
-    else:
-        gb = train_df.groupby(trait).size()
+    # trait: artist_id, track_id, user_id
+    gb = train_df.groupby(trait)["user_track_count"].sum()
     ndx = gb.index.tolist()
-    weights = 1/np.log(gb.values+1)
+    weights = np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
-    weights = weights / weights.sum()
+    weights = weights / weights.max()
 
     mapper = dict(zip(ndx, weights))
-    return train_df[trait if trait != "user_track_count" else "user_id"].map(mapper.get)
+    return train_df[trait].map(mapper.get)
 
 def get_user_rel_weight(train_df, users_df, trait):
     # train in ["gender", "country"]
     gb = users_df.fillna("n").groupby(trait).size()
     ndx = gb.index.tolist()
     if trait == "gender":
-        weights = 1/gb.values
+        weights = gb.values
     else:
-        weights = 1/np.log(gb.values+1)
+        weights = np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
 
@@ -200,7 +197,7 @@ class MyModel(RecModel):
         
         batch_size = 512
         n_epochs = 2
-        shared_emb_dim = 128
+        shared_emb_dim = 256
         num_workers = 4
         margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
@@ -236,15 +233,15 @@ class MyModel(RecModel):
             # "country": 1,
             # "user_track_count": 1,
             "artist_id": 1.,
-            "track_id": 1.,
+            "track_id": 0.,
             "gender": 1.,
-            "country": 1.,
-            "user_track_count": 1.,
+            "country": 0.,
+            "user_id": 1.,
         }
         print(l)
         weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
                   get_track_rel_weight(train_df, "track_id") * l["track_id"] + \
-                  get_track_rel_weight(train_df, "user_track_count") * l["user_track_count"] + \
+                  get_track_rel_weight(train_df, "user_id") * l["user_id"] + \
                   get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
                   get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
 
@@ -318,38 +315,28 @@ class MyModel(RecModel):
 
         print("Sorting similarities")
 
-        include_known_tracks = False
-
         known_tracks_array = np.array(self.known_tracks)
         assert len(user_ids) == cos_mat.shape[0]
         results = np.zeros((len(user_ids), self.top_k), dtype=int)
 
-        if include_known_tracks:
-            bs = 8
-            with tqdm(range(cos_mat.shape[0] // bs + 1)) as bar:
-                for i in bar:
-                    cos_mat_sub = np.argsort(-cos_mat[i*bs:(i+1)*bs], axis=1)[:, :self.top_k]
-                    results[i*bs:(i+1)*bs] = cos_mat_sub
-            preds = known_tracks_array[results]
-        else:
-            known_likes = {}
-            for user, grp in self.train_df.groupby("user_id"):
-                known_likes[user] = set(grp["track_id"])
+        known_likes = {}
+        for user, grp in self.train_df.groupby("user_id"):
+            known_likes[user] = set(grp["track_id"])
 
-            with tqdm(range(cos_mat.shape[0])) as bar:
-                for i in bar:
-                    curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
+        with tqdm(range(cos_mat.shape[0])) as bar:
+            for i in bar:
+                curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
 
-                    parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
-                    cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                    chosen = []
-                    j = 0
-                    while len(chosen) < self.top_k:
-                        if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                            chosen.append(cos_mat_sub[j])
-                        j += 1
-                    results[i] = chosen
-            preds = results
+                parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
+                cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
+                chosen = []
+                j = 0
+                while len(chosen) < self.top_k:
+                    if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
+                        chosen.append(cos_mat_sub[j])
+                    j += 1
+                results[i] = chosen
+        preds = results
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
 
