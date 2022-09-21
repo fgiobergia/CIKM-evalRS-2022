@@ -19,7 +19,7 @@ def get_track_rel_weight(train_df, trait):
     # trait: artist_id, track_id, user_id
     gb = train_df.groupby(trait)["user_track_count"].sum()
     ndx = gb.index.tolist()
-    weights = np.log(gb.values+1)
+    weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.max()
 
@@ -33,7 +33,7 @@ def get_user_rel_weight(train_df, users_df, trait):
     if trait == "gender":
         weights = gb.values
     else:
-        weights = np.log(gb.values+1)
+        weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
 
@@ -184,7 +184,8 @@ class MyModel(RecModel):
         #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
-        self.users_df = users
+        self.df_users = users
+        # self.df_tracks = tracks
 
 
     
@@ -222,8 +223,8 @@ class MyModel(RecModel):
         # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
-        X_plays = np.log(train_df["user_track_count"].values.reshape(-1,1))
-        X_plays = X_plays/X_plays.max()
+        X_plays = train_df["user_track_count"].values.reshape(-1,1)
+        # X_plays =  X_plays/X_plays.max()
 
         self.X_users = X_users
         self.X_tracks = X_tracks
@@ -245,8 +246,8 @@ class MyModel(RecModel):
         weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
                   get_track_rel_weight(train_df, "track_id") * l["track_id"] + \
                   get_track_rel_weight(train_df, "user_id") * l["user_id"] + \
-                  get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
-                  get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
+                  get_user_rel_weight(train_df, self.df_users, "gender") * l["gender"] + \
+                  get_user_rel_weight(train_df, self.df_users, "country") * l["country"]
 
 
         ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
@@ -322,35 +323,42 @@ class MyModel(RecModel):
         assert len(user_ids) == cos_mat.shape[0]
         results = np.zeros((len(user_ids), self.top_k), dtype=int)
 
-            known_likes = {}
-            for user, grp in self.train_df.groupby("user_id"):
-                known_likes[user] = set(grp["track_id"])
+        known_likes = {}
+        for user, grp in self.train_df.groupby("user_id"):
+            known_likes[user] = set(grp["track_id"])
 
-            horizon = 5
-            with tqdm(range(cos_mat.shape[0])) as bar:
-                for i in bar:
-                    curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])
+        horizon = 5
 
-                    parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
-                    cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                    chosen = np.zeros(self.top_k * horizon)
-                    j = 0
-                    k = 0
-                    while k < self.top_k * horizon:
-                        if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                            # chosen.append(cos_mat_sub[j])
-                            chosen[k] = cos_mat_sub[j]
-                            k += 1
-                        j += 1
+        # tracks_pop = np.log(self.train_df.groupby("track_id")["user_track_count"].sum())
+        # tracks_pop = (tracks_pop - tracks_pop.min()) / (tracks_pop.max() - tracks_pop.min())
 
-                    p = 1/(1+np.arange(len(chosen)))
-                    p = p / p.sum()
-                    subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
-                    
-                    results[i] = chosen[subset] #sort_by_order(chosen, subset)
+        with tqdm(range(cos_mat.shape[0])) as bar:
+            for i in bar:
+                curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])
+
+                parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
+                cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
+                chosen = np.zeros(self.top_k * horizon)
+                j = 0
+                k = 0
+                while k < self.top_k * horizon:
+                    if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
+                        # chosen.append(cos_mat_sub[j])
+                        chosen[k] = cos_mat_sub[j]
+                        k += 1
+                    j += 1
+
+                p = 1/(1+np.arange(len(chosen)))# + 0.01 * tracks_pop[chosen].values
 
 
-            preds = results
+
+                p = p / p.sum()
+                subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
+                
+                results[i] = chosen[subset] #sort_by_order(chosen, subset)
+
+
+        preds = results
 
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
