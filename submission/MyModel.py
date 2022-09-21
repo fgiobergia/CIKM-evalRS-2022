@@ -3,7 +3,8 @@ import pandas as pd
 from reclist.abstractions import RecModel
 import random
 
-# from gensim.models.callback import CallbackAny2Vec
+from gensim.models.callbacks import CallbackAny2Vec
+from gensim.models import Word2Vec
 from tqdm import tqdm
 
 import torch
@@ -14,46 +15,52 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
-# class EpochLogger(CallbackAny2Vec):
-#     '''Callback to log information about training'''
-#     def __init__(self, n_epochs):
-#         self.bar = tqdm(n_epochs)
+class EpochLogger(CallbackAny2Vec):
+    '''Callback to log information about training'''
+    def __init__(self, n_epochs):
+        self.bar = tqdm(n_epochs)
 
-#     def on_epoch_begin(self, model):
-#         self.bar.update()
+    def on_epoch_begin(self, model):
+        self.bar.update()
 
-#     def on_epoch_end(self, model):
-#         self.bar.set_postfix(loss=model.get_latest_training_loss())
+    def on_epoch_end(self, model):
+        self.bar.set_postfix(loss=model.get_latest_training_loss())
     
-#     def on_train_end(self, model):
-#         self.bar.close()
+    def on_train_end(self, model):
+        self.bar.close()
 
 class UserEncoder(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, vecs=None):
         super().__init__()
 
-        k = 1 / (in_size ** .5)
-        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        if vecs is None:
+            k = 1 / (in_size ** .5)
+            self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        else:
+            self.mat = nn.Parameter(torch.tensor(vecs))
     
     def forward(self, x):
         return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, vecs=None):
         super().__init__()
 
-        k = 1 / (in_size ** .5)
-        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        if vecs is None:
+            k = 1 / (in_size ** .5)
+            self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        else:
+            self.mat = nn.Parameter(torch.tensor(vecs))
     
     def forward(self, x):
         return self.mat[x.flatten()]
 
 class ContrastiveModel(nn.Module):
-    def __init__(self, user_size, track_size, n_dim):
+    def __init__(self, user_size, track_size, n_dim, track_vecs):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
-        self.track_enc = TrackEncoder(track_size, n_dim)
+        self.track_enc = TrackEncoder(track_size, n_dim)#, track_vecs)
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
@@ -100,30 +107,30 @@ class MyModel(RecModel):
 
     def __init__(self, tracks: pd.DataFrame, users: pd.DataFrame, top_k : int = 100, **kwargs):
         try:
-            torch.multiprocessing.set_start_method('spawn')
+            torch.multiprocessing.set_start_method('spawn')# good solution !!!!
         except:
             pass
         self.top_k = top_k
 
-        # The stuff below may be needed if running word2vec or other embedding
-        # algorithms which require words (tokens) and not numerical values
-        # (i.e. do some discretization)
-        # n_bins = 10
-
-        # users = users.reset_index()
-        # tracks = tracks.reset_index()
+        sentences = []
+        for track_id, row in tracks.iterrows():
+            sentence = [
+                f'track={track_id}', f'artist={row["artist_id"]}', *[ f"album={i}" for i in map(int,row["albums_id"][1:-1].split(", ")) ]
+            ]
+            sentences.append(sentence)
         
-        # # convert user features that are numerical into bins
-        # for col in users.select_dtypes(np.float64):
-        #     users[col] = pd.qcut(users[col], q=n_bins, duplicates="drop").astype(str)
+        n_epochs = 10
+        self.sentences = sentences
+        self.w2v_model = Word2Vec(self.sentences, vector_size=128,  \
+                             window=max(map(len,sentences)),  \
+                             workers=8,
+                             sg=1, hs=0, negative=5, seed=42, \
+                             min_count=1, \
+                             epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
 
-        # for col in users:
-        #     users[col] = users[col].map(lambda x: f"{col}={x}")
-
-        # tracks.drop(columns=["track", "artist", "albums_id", "albums"], inplace=True)
-
-        # for col in tracks:
-        #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
+        self.tracks_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.tracks_reverse_lookup = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.tracks_lookup = { k: v for v, k in enumerate(self.tracks_reverse_lookup )}
 
         self.known_tracks = list(set(tracks.index.values.tolist()))
     
@@ -139,7 +146,7 @@ class MyModel(RecModel):
         
         batch_size = 512
         n_epochs = 1
-        shared_emb_dim = 256
+        shared_emb_dim = 128
         num_workers = 4
         margin = .75
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
@@ -154,8 +161,8 @@ class MyModel(RecModel):
 
         self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
         self.rev_user_map = { k: v for v,k in self.user_map.items() }
-        self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
-        self.rev_track_map = { k: v for v,k in self.track_map.items() }
+        self.track_map = self.tracks_lookup #{ k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
+        self.rev_track_map = self.tracks_reverse_lookup #{ k: v for v,k in self.track_map.items() }
 
         # X_users = train_df["user_id"].values.reshape(-1,1)
         # X_tracks = train_df["track_id"].values.reshape(-1,1)
@@ -168,7 +175,7 @@ class MyModel(RecModel):
         ds = UserTrackDataset(X_users, X_tracks, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim, self.tracks_vecs).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
