@@ -117,9 +117,6 @@ class ContrastiveModel(nn.Module):
 
         return x_user, x_track_pos, x_track_neg
 
-        # pos_cos = self.cos(x_user, x_track_pos)
-        # neg_cos = self.cos(x_user, x_track_neg)
-
 class UserTrackDataset():
     def __init__(self, X_user, X_track, X_plays, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
@@ -138,18 +135,8 @@ class UserTrackDataset():
         x_track_pos = self.X_track[i]
         j = random.randint(0, len(self)-1)
         x_track_neg = self.X_track[j]
-        
-        
-        # The approach below searches for a guaranteed negative sample
-        # (i.e. make sure that the sample actually belongs to some other user).
-        # however, it is a bit slower (1h30 vs 1h15 for 1 epoch), so we'll
-        # trust that, on large scales, very few "false" negatives will be chosen
-        # same_user = True
-        # while same_user:
-        #     j = random.randint(0, len(self)-1)
-        #     if (self.X_user[j] != self.X_user[i]).todense().any():
-        #         same_user = False
         return x_user, x_track_pos, x_track_neg, self.w[i], self.X_plays[i]
+
 
 class MyModel(RecModel):
 
@@ -162,27 +149,6 @@ class MyModel(RecModel):
         except:
             pass
         self.top_k = top_k
-
-        # The stuff below may be needed if running word2vec or other embedding
-        # algorithms which require words (tokens) and not numerical values
-        # (i.e. do some discretization)
-        # n_bins = 10
-
-        # users = users.reset_index()
-        # tracks = tracks.reset_index()
-        
-        # # convert user features that are numerical into bins
-        # for col in users.select_dtypes(np.float64):
-        #     users[col] = pd.qcut(users[col], q=n_bins, duplicates="drop").astype(str)
-
-        # for col in users:
-        #     users[col] = users[col].map(lambda x: f"{col}={x}")
-
-        # tracks.drop(columns=["track", "artist", "albums_id", "albums"], inplace=True)
-
-        # for col in tracks:
-        #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
-
         self.known_tracks = list(set(tracks.index.values.tolist()))
         self.df_users = users
         # self.df_tracks = tracks
@@ -208,19 +174,11 @@ class MyModel(RecModel):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # self.ohe_users = OneHotEncoder(dtype=np.float32)
-        # self.ohe_tracks = OneHotEncoder(dtype=np.float32)
-
-        # X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
-        # X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
-
         self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
         self.rev_user_map = { k: v for v,k in self.user_map.items() }
         self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
         self.rev_track_map = { k: v for v,k in self.track_map.items() }
 
-        # X_users = train_df["user_id"].values.reshape(-1,1)
-        # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
         X_plays = train_df["user_track_count"].values.reshape(-1,1)
@@ -269,10 +227,10 @@ class MyModel(RecModel):
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
+                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar: main
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (w * loss_func(anchor, pos, neg)).mean()
+                    loss = (loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
@@ -291,10 +249,7 @@ class MyModel(RecModel):
         
         """
         
-        # X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
-
         X_users = np.array([ self.user_map[i] for i in user_ids["user_id"]]).reshape(-1,1)
-        # X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
 
         bs = 1024
 
@@ -304,7 +259,6 @@ class MyModel(RecModel):
             users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
 
             print("Loading tracks embeddings")
-            # tracks_list = np.array(self.known_tracks).reshape(-1,1)
             X_tracks = np.array([ self.track_map[i] for i in self.known_tracks]).reshape(-1,1)
             tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
         finally:
