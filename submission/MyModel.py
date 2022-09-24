@@ -165,12 +165,12 @@ class MyModel(RecModel):
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
 
-        self.n_clusters = 2
+        self.n_clusters = 1
         users_clusters = get_users_clusters(train_df, self.df_users, n_clusters=self.n_clusters)
         train_df = train_df.merge(users_clusters, left_on="user_id", right_index=True)
 
         batch_size = 512
-        n_epochs = 3
+        n_epochs = 2
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -235,6 +235,8 @@ class MyModel(RecModel):
                     return 1 - cossim(*args, **kwargs)
                 return func
             loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist(), reduction="none")
+
+            print("Training with", len(ds), "records", len(self.user_map[clust]), "users", len(self.track_map[clust]), "tracks")
 
             for epoch in range(n_epochs):
                 print(f"Epoch {epoch+1}/{n_epochs}")
@@ -305,6 +307,7 @@ class MyModel(RecModel):
 
             # tracks_artist_pop = self.train_df.merge(artists_pop, left_on="artist_id", right_index=True).groupby("track_id")["artist_pop"].first()
 
+            print("Predictions with", users_emb.shape[0], "users", tracks_emb.shape[0], "tracks")
             overlaps = []
             with tqdm(range(cos_mat.shape[0])) as bar:
                 for i in bar:
