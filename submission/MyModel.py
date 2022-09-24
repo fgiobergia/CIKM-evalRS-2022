@@ -165,7 +165,7 @@ class MyModel(RecModel):
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
 
-        self.n_clusters = 2
+        self.n_clusters = 3
         users_clusters = get_users_clusters(train_df, self.df_users, n_clusters=self.n_clusters)
         train_df = train_df.merge(users_clusters, left_on="user_id", right_index=True)
 
@@ -296,7 +296,7 @@ class MyModel(RecModel):
             for user, grp in self.train_df.groupby("user_id"):
                 known_likes[user] = set(grp["track_id"])
 
-            horizon = 1
+            horizon = 5
 
             # tracks_pop = np.log(self.train_df.groupby("track_id")["user_track_count"].sum())
             # tracks_pop = (tracks_pop - tracks_pop.min()) / (tracks_pop.max() - tracks_pop.min())
