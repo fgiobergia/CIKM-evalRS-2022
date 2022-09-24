@@ -103,7 +103,7 @@ class MyModel(RecModel):
         self.train_df = train_df
         
         batch_size = 512
-        n_epochs = 1
+        n_epochs = 2
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -194,19 +194,36 @@ class MyModel(RecModel):
         for user, grp in self.train_df.groupby("user_id"):
             known_likes[user] = set(grp["track_id"])
 
+        overlaps = []
+        horizon = 1
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
 
                 parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
                 cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                chosen = []
+                chosen = np.zeros(self.top_k * horizon)
                 j = 0
-                while len(chosen) < self.top_k:
+                k = 0
+                overlaps.append(len(set(cos_mat_sub)&known_likes[int(user_ids.iloc[i])]) / len(known_likes[int(user_ids.iloc[i])]))
+                ### TODO: overlap between found and known is small!!!
+                while k < self.top_k * horizon:
                     if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                        chosen.append(cos_mat_sub[j])
+                        chosen[k] = cos_mat_sub[j]
+                        k += 1
                     j += 1
-                results[i] = chosen
+
+                p = 1/(1+np.arange(len(chosen)))# + 1 * tracks_pop[chosen].values + 1 * tracks_artist_pop[chosen].values
+
+                p = p / p.sum()
+                subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
+            
+                results[i] = chosen[sorted(subset)] #sort_by_order(chosen, subset)
+            
+            print("Overlaps report")
+            print("mean", np.mean(overlaps))
+            print("std", np.std(overlaps))
+            print("max", np.max(overlaps), "min", np.min(overlaps))
         preds = results
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
