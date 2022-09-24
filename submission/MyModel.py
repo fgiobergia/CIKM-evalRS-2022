@@ -134,6 +134,7 @@ class MyModel(RecModel):
                 return 1 - cossim(*args, **kwargs)
             return func
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
+        print("Training with", len(ds), "records", len(self.user_map), "users", len(self.track_map), "tracks")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
@@ -196,6 +197,7 @@ class MyModel(RecModel):
 
         overlaps = []
         horizon = 1
+        print("Predictions with", users_emb.shape[0], "users", track_emb.shape[0], "tracks")
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
