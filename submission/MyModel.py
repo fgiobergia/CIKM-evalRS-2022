@@ -170,7 +170,7 @@ class MyModel(RecModel):
         train_df = train_df.merge(users_clusters, left_on="user_id", right_index=True)
 
         batch_size = 512
-        n_epochs = 4
+        n_epochs = 3
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -340,5 +340,5 @@ class MyModel(RecModel):
 
             data = np.hstack([ clust_user_ids["user_id"].values.reshape(-1, 1), preds ])
             dfs.append(pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id'))
-        return pd.concat(dfs)
-
+        df = pd.concat(dfs)
+        return df
