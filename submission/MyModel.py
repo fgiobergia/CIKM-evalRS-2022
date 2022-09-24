@@ -197,7 +197,7 @@ class MyModel(RecModel):
 
         overlaps = []
         horizon = 1
-        print("Predictions with", users_emb.shape[0], "users", track_emb.shape[0], "tracks")
+        print("Predictions with", users_emb.shape[0], "users", tracks_emb.shape[0], "tracks")
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
