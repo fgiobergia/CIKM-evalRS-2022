@@ -220,7 +220,9 @@ class MyModel(RecModel):
             def func(*args, **kwargs):
                 return 1 - cossim(*args, **kwargs)
             return func
+        
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist(), reduction="none")
+        print("Training with", len(ds), "records", len(self.user_map), "users", len(self.track_map), "tracks")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
@@ -282,9 +284,8 @@ class MyModel(RecModel):
             known_likes[user] = set(grp["track_id"])
 
         horizon = 5
-
-        # tracks_pop = np.log(self.train_df.groupby("track_id")["user_track_count"].sum())
-        # tracks_pop = (tracks_pop - tracks_pop.min()) / (tracks_pop.max() - tracks_pop.min())
+        overlaps = []
+        print("Predictions with", users_emb.shape[0], "users", tracks_emb.shape[0], "tracks")
 
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
@@ -295,23 +296,25 @@ class MyModel(RecModel):
                 chosen = np.zeros(self.top_k * horizon)
                 j = 0
                 k = 0
+                overlaps.append(len(set(cos_mat_sub)&known_likes[int(user_ids.iloc[i])]) / len(known_likes[int(user_ids.iloc[i])]))
+                ### TODO: overlap between found and known is small!!!
                 while k < self.top_k * horizon:
                     if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                        # chosen.append(cos_mat_sub[j])
                         chosen[k] = cos_mat_sub[j]
                         k += 1
                     j += 1
 
-                p = 1/(1+np.arange(len(chosen)))# + 0.01 * tracks_pop[chosen].values
-
-
+                p = 1/(1+np.arange(len(chosen)))# + 1 * tracks_pop[chosen].values + 1 * tracks_artist_pop[chosen].values
 
                 p = p / p.sum()
                 subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
-                
-                results[i] = chosen[subset] #sort_by_order(chosen, subset)
-
-
+            
+                results[i] = chosen[sorted(subset)] #sort_by_order(chosen, subset)
+            
+            print("Overlaps report")
+            print("mean", np.mean(overlaps))
+            print("std", np.std(overlaps))
+            print("max", np.max(overlaps), "min", np.min(overlaps))
         preds = results
 
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
