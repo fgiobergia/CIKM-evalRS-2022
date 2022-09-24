@@ -165,12 +165,12 @@ class MyModel(RecModel):
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
 
-        self.n_clusters = 1
+        self.n_clusters = 2
         users_clusters = get_users_clusters(train_df, self.df_users, n_clusters=self.n_clusters)
         train_df = train_df.merge(users_clusters, left_on="user_id", right_index=True)
 
         batch_size = 512
-        n_epochs = 2
+        n_epochs = 3
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
