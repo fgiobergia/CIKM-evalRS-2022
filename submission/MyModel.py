@@ -229,7 +229,7 @@ class MyModel(RecModel):
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar: main
+                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
                     loss = (loss_func(anchor, pos, neg)).mean()
