@@ -14,6 +14,52 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+def deduplicate(df_tracks, train):
+    train_dedup = train.copy()
+    df_tracks_dedup = df_tracks.copy()
+
+    # first, deduplicate artists (i.e. find artists
+    # with the same name)
+    mapper = { k: k for k in df_tracks["artist_id"] }
+    for artist_name, grp in df_tracks.groupby("artist"):
+        counts = grp["artist_id"].value_counts()
+        if len(counts) == 1: # no duplicates -- free to go
+            continue
+        
+        unique_artist_id = counts.idxmax() # pick artist id of artist w/ largest # of songs
+        # this id is then propagated to all other tracks in train
+        
+        for k in counts.index:
+            mapper[k] = unique_artist_id
+        
+        art_id_set = set(counts.index)
+
+    train_dedup["artist_id"] = train_dedup["artist_id"].map(mapper.get)
+    df_tracks_dedup["artist_id"] = df_tracks_dedup["artist_id"].map(mapper.get)
+
+    # after artists have been deduplicated, deduplicate
+    # tracks (i.e. tracks that have the same artist and song title)
+    drop_rows = []
+    mapper = { k: k for k in df_tracks_dedup.index }
+    for song_name, grp in df_tracks_dedup.groupby(["artist_id", "track"]):
+        
+        if len(grp) == 1:
+            continue # no duplicate songs here
+        
+        unique_track_id = grp.index[0] # pick any one id -- computing the most frequent one is too expensive
+        
+        for k in grp.index:
+            mapper[k] = grp.index[0]
+        
+    #     trk_id_set = set(grp.index)
+    #     train_dedup.loc[train_dedup["track_id"].isin(trk_id_set), "track_id"] = unique_track_id
+        drop_rows.extend(grp.index[1:])
+
+    train_dedup["track_id"] = train_dedup["track_id"].map(mapper.get)
+    df_tracks_dedup.drop(drop_rows, inplace=True)
+
+    return df_tracks_dedup, train_dedup
+
 
 def get_track_rel_weight(train_df, trait):
     # trait: artist_id, track_id, user_id
@@ -109,8 +155,7 @@ class MyModel(RecModel):
         self.top_k = top_k
         self.known_tracks = list(set(tracks.index.values.tolist()))
         self.users_df = users
-
-
+        self.df_tracks = tracks
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -119,6 +164,8 @@ class MyModel(RecModel):
         # training. In a future solution, we will generalize to
         # unseen songs by considering their proximity in some
         # embedding space (e.g. b/c they share the same author/album)
+        self.df_tracks, train_df = deduplicate(self.df_tracks, train_df)
+        
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
         
@@ -148,7 +195,7 @@ class MyModel(RecModel):
             "artist_id": 1e4,
             "track_id": 1e5,
             "gender": 1.,
-            "country": 100.,
+            "country": 300.,
             "user_id": 1e4,
         }
         print(l)
@@ -184,7 +231,7 @@ class MyModel(RecModel):
                 for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (w * loss_func(anchor, pos, neg)).mean()
+                    loss = (loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
@@ -254,7 +301,7 @@ class MyModel(RecModel):
                         k += 1
                     j += 1
 
-                p = 1/(1+np.arange(len(chosen)))# + 1 * tracks_pop[chosen].values + 1 * tracks_artist_pop[chosen].values
+                p = 1/(1+np.arange(len(chosen)))
 
                 p = p / p.sum()
                 subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
