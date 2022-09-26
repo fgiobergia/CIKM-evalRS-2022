@@ -43,29 +43,6 @@ def get_user_rel_weight(train_df, users_df, trait):
     df_merged = train_df.merge(users_df.fillna("n"), left_on="user_id", right_index=True)
     return df_merged[trait].map(mapper.get)
 
-def get_artists_weight(train_df, n_bins=10):
-    gb = train_df.groupby("track_id").size()
-    artists = gb.index.tolist()
-    counts = gb.tolist()
-
-    bins = np.logspace(np.log10(min(counts)), np.log10(max(counts)), n_bins, base=10)
-    bins[-1]+=1
-
-    weights = np.histogram(counts, bins=bins)[0]
-    weights = weights/weights.sum()
-
-    mapper = dict(zip(artists, weights[np.digitize(counts, bins=bins)-1]))
-    return train_df["track_id"].map(mapper.get)
-
-def get_gender_weight(train_df, users_df):
-    gb = users_df.fillna("n").groupby("gender").size()
-    genders = gb.index.tolist()
-    weights = 1/gb.values
-    weights = weights / weights.sum()
-    gender_weights = dict(zip(genders, weights))
-    users_lookup = dict(zip(users_df.index, users_df["gender"].fillna("n").map(gender_weights.get)))
-    return train_df["user_id"].map(users_lookup.get)
-
 # class EpochLogger(CallbackAny2Vec):
 #     '''Callback to log information about training'''
 #     def __init__(self, n_epochs):
