@@ -75,9 +75,6 @@ class ContrastiveModel(nn.Module):
 
         return x_user, x_track_pos, x_track_neg
 
-        # pos_cos = self.cos(x_user, x_track_pos)
-        # neg_cos = self.cos(x_user, x_track_neg)
-
 class UserTrackDataset():
     def __init__(self, X_user, X_track, X_plays, w, device=None):
         assert X_user.shape[0] == X_track.shape[0]
@@ -96,17 +93,7 @@ class UserTrackDataset():
         x_track_pos = self.X_track[i]
         j = random.randint(0, len(self)-1)
         x_track_neg = self.X_track[j]
-        
-        
-        # The approach below searches for a guaranteed negative sample
-        # (i.e. make sure that the sample actually belongs to some other user).
-        # however, it is a bit slower (1h30 vs 1h15 for 1 epoch), so we'll
-        # trust that, on large scales, very few "false" negatives will be chosen
-        # same_user = True
-        # while same_user:
-        #     j = random.randint(0, len(self)-1)
-        #     if (self.X_user[j] != self.X_user[i]).todense().any():
-        #         same_user = False
+
         return x_user, x_track_pos, x_track_neg, self.w[i], self.X_plays[i]
 
 class MyModel(RecModel):
@@ -120,27 +107,6 @@ class MyModel(RecModel):
         except:
             pass
         self.top_k = top_k
-
-        # The stuff below may be needed if running word2vec or other embedding
-        # algorithms which require words (tokens) and not numerical values
-        # (i.e. do some discretization)
-        # n_bins = 10
-
-        # users = users.reset_index()
-        # tracks = tracks.reset_index()
-        
-        # # convert user features that are numerical into bins
-        # for col in users.select_dtypes(np.float64):
-        #     users[col] = pd.qcut(users[col], q=n_bins, duplicates="drop").astype(str)
-
-        # for col in users:
-        #     users[col] = users[col].map(lambda x: f"{col}={x}")
-
-        # tracks.drop(columns=["track", "artist", "albums_id", "albums"], inplace=True)
-
-        # for col in tracks:
-        #     tracks[col] = tracks[col].map(lambda x: f"{col}={x}")
-
         self.known_tracks = list(set(tracks.index.values.tolist()))
         self.users_df = users
 
@@ -165,19 +131,11 @@ class MyModel(RecModel):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # self.ohe_users = OneHotEncoder(dtype=np.float32)
-        # self.ohe_tracks = OneHotEncoder(dtype=np.float32)
-
-        # X_users = self.ohe_users.fit_transform(train_df["user_id"].values.reshape(-1,1))
-        # X_tracks = self.ohe_tracks.fit_transform(train_df["track_id"].values.reshape(-1,1))
-
         self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
         self.rev_user_map = { k: v for v,k in self.user_map.items() }
         self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
         self.rev_track_map = { k: v for v,k in self.track_map.items() }
 
-        # X_users = train_df["user_id"].values.reshape(-1,1)
-        # X_tracks = train_df["track_id"].values.reshape(-1,1)
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
         X_plays = np.log(train_df["user_track_count"].values.reshape(-1,1))
@@ -214,7 +172,9 @@ class MyModel(RecModel):
             def func(*args, **kwargs):
                 return 1 - cossim(*args, **kwargs)
             return func
+
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist(), reduction="none")
+        print("Training with", len(ds), "records", len(self.user_map), "users", len(self.track_map), "tracks")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
@@ -243,10 +203,7 @@ class MyModel(RecModel):
         
         """
         
-        # X_users = self.ohe_users.transform(user_ids["user_id"].values.reshape(-1,1))
-
         X_users = np.array([ self.user_map[i] for i in user_ids["user_id"]]).reshape(-1,1)
-        # X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
 
         bs = 1024
 
@@ -256,7 +213,6 @@ class MyModel(RecModel):
             users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
 
             print("Loading tracks embeddings")
-            # tracks_list = np.array(self.known_tracks).reshape(-1,1)
             X_tracks = np.array([ self.track_map[i] for i in self.known_tracks]).reshape(-1,1)
             tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
         finally:
@@ -279,19 +235,37 @@ class MyModel(RecModel):
         for user, grp in self.train_df.groupby("user_id"):
             known_likes[user] = set(grp["track_id"])
 
+        overlaps = []
+        horizon = 1
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
 
                 parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
                 cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                chosen = []
+                chosen = np.zeros(self.top_k * horizon)
                 j = 0
-                while len(chosen) < self.top_k:
+                k = 0
+                overlaps.append(len(set(cos_mat_sub)&known_likes[int(user_ids.iloc[i])]) / len(known_likes[int(user_ids.iloc[i])]))
+                ### TODO: overlap between found and known is small!!!
+                while k < self.top_k * horizon:
                     if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                        chosen.append(cos_mat_sub[j])
+                        chosen[k] = cos_mat_sub[j]
+                        k += 1
                     j += 1
-                results[i] = chosen
+
+                p = 1/(1+np.arange(len(chosen)))# + 1 * tracks_pop[chosen].values + 1 * tracks_artist_pop[chosen].values
+
+                p = p / p.sum()
+                subset = np.random.choice(len(chosen), size=self.top_k, p=p, replace=False)
+            
+                results[i] = chosen[sorted(subset)] #sort_by_order(chosen, subset)
+            
+            print("Overlaps report")
+            print("mean", np.mean(overlaps))
+            print("std", np.std(overlaps))
+            print("max", np.max(overlaps), "min", np.min(overlaps))
+
         preds = results
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
         return pd.DataFrame(data, columns=['user_id', *[str(i) for i in range(self.top_k)]]).set_index('user_id')
