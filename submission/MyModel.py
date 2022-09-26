@@ -9,7 +9,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
@@ -19,7 +19,7 @@ def get_track_rel_weight(train_df, trait):
     # trait: artist_id, track_id, user_id
     gb = train_df.groupby(trait)["user_track_count"].sum()
     ndx = gb.index.tolist()
-    weights = np.log(gb.values+1)
+    weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.max()
 
@@ -31,9 +31,9 @@ def get_user_rel_weight(train_df, users_df, trait):
     gb = users_df.fillna("n").groupby(trait).size()
     ndx = gb.index.tolist()
     if trait == "gender":
-        weights = gb.values
+        weights = 1/gb.values
     else:
-        weights = np.log(gb.values+1)
+        weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
 
@@ -232,10 +232,10 @@ class MyModel(RecModel):
             # "gender": 1.5,
             # "country": 1,
             # "user_track_count": 1,
-            "artist_id": 1.,
+            "artist_id": 0.,
             "track_id": 0.,
             "gender": 1.,
-            "country": 0.,
+            "country": 1.,
             "user_id": 1.,
         }
         print(l)
@@ -244,11 +244,12 @@ class MyModel(RecModel):
                   get_track_rel_weight(train_df, "user_id") * l["user_id"] + \
                   get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
                   get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
+        weights = torch.tensor(weights.values)
 
 
         ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
-
-        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        wrs = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        dl = DataLoader(ds, batch_size=batch_size, sampler=wrs, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
@@ -268,7 +269,7 @@ class MyModel(RecModel):
                 for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (w * loss_func(anchor, pos, neg)).mean()
+                    loss = (loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
