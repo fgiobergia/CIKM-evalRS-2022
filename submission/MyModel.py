@@ -126,8 +126,7 @@ class MyModel(RecModel):
         # embedding space (e.g. b/c they share the same author/album)
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
-        print("OK")
-        train_df = pd.concat([ train_df, augment_df(train_df) ])
+        # train_df = pd.concat([ train_df, augment_df(train_df) ])
         
         batch_size = 512
         n_epochs = 2
