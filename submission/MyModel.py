@@ -42,25 +42,23 @@ class UserEncoder(nn.Module):
     def forward(self, x):
         return self.mat[x.flatten()]
 
-
 class TrackEncoder(nn.Module):
-    def __init__(self, in_size, out_size, vecs=None):
+    def __init__(self, track_vecs, n_dim):
         super().__init__()
-
-        if vecs is None:
-            k = 1 / (in_size ** .5)
-            self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
-        else:
-            self.mat = nn.Parameter(torch.tensor(vecs))
+        # define function f() that is trained to align track vectors
+        self.W1 = nn.Linear(n_dim, n_dim) #nn.Parameter(torch.empty((n_dim, n_dim)).uniform_(-k,  k))
+        # self.W2 = nn.Linear(n_dim, n_dim) #nn.Parameter(torch.empty((n_dim, n_dim)).uniform_(-k,  k))
+        self.track_vecs = track_vecs
     
     def forward(self, x):
-        return self.mat[x.flatten()]
+        return self.W1(self.track_vecs[x.flatten()])
+        # return self.W2(torch.relu(self.W1(self.track_vecs[x.flatten()])))
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim, track_vecs):
         super().__init__()
         self.user_enc = UserEncoder(user_size, n_dim)
-        self.track_enc = TrackEncoder(track_size, n_dim)#, track_vecs)
+        self.track_enc = TrackEncoder(track_vecs, n_dim)
     
     def forward(self, x_user, x_track_pos, x_track_neg):
         x_user = self.user_enc(x_user)
@@ -69,7 +67,8 @@ class ContrastiveModel(nn.Module):
 
         return x_user, x_track_pos, x_track_neg
 
-def augment_df(train):
+def augment_df(train, new_rows_num = 1):
+    #  new_rows_num  how many rows should be added for each existing row
     mapper = {}
     for _, rows in train.groupby("artist_id"):
         vals = rows.groupby(rows["track_id"]).size().index.tolist()
@@ -77,7 +76,6 @@ def augment_df(train):
             mapper[v] = vals
     # mapper now contains a dict with track_id: [ other track ids from same author ]
 
-    new_rows_num = 1 # how many rows should be added for each existing row
     # TODO: choose users to enhance with criteria, instead of everybody
 
 #         # TODO: if we use user_track_count in the future, 
@@ -123,8 +121,44 @@ class MyModel(RecModel):
             pass
         self.top_k = top_k
 
+        # sentences = []
+        # for track_id, row in tracks.iterrows():
+        #     sentence = [
+        #         f'track={track_id}', f'artist={row["artist_id"]}', *[ f"album={i}" for i in map(int,row["albums_id"][1:-1].split(", ")) ]
+        #     ]
+        #     sentences.append(sentence)
+        
+        # n_epochs = 10
+        # self.sentences = sentences
+        # self.w2v_model = Word2Vec(self.sentences, vector_size=256,  \
+        #                      window=max(map(len,sentences)),  \
+        #                      workers=8,
+        #                      sg=1, hs=0, negative=5, seed=42, \
+        #                      min_count=1, \
+        #                      # use sample param to downsample frequent words?
+        #                      # (or, increase # epochs)
+        #                      epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
+
+        # self.tracks_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        # self.tracks_reverse_lookup = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        # self.tracks_lookup = { k: v for v, k in enumerate(self.tracks_reverse_lookup )}
+
+        self.known_tracks = list(set(tracks.index.values.tolist()))
+        self.df_tracks = tracks
+    
+    def train(self, train_df: pd.DataFrame):
+        # option 1: embed each user/track as a 1-hot vector
+
+        # TODO: currently only considering songs we see during
+        # training. In a future solution, we will generalize to
+        # unseen songs by considering their proximity in some
+        # embedding space (e.g. b/c they share the same author/album)
+        self.known_tracks = list(set(train_df["track_id"].values.tolist()))
+        self.train_df = train_df
+        train_df = pd.concat([ train_df, augment_df(train_df, 4) ])
+
         sentences = []
-        for track_id, row in tracks.iterrows():
+        for track_id, row in self.df_tracks.iterrows(): #dataset.df_tracks.merge(train.groupby("track_id").size().rename("count"), left_index=True, right_index=True):
             sentence = [
                 f'track={track_id}', f'artist={row["artist_id"]}', *[ f"album={i}" for i in map(int,row["albums_id"][1:-1].split(", ")) ]
             ]
@@ -137,24 +171,15 @@ class MyModel(RecModel):
                              workers=8,
                              sg=1, hs=0, negative=5, seed=42, \
                              min_count=1, \
+                             sample=1e-5, \
+                             # use sample param to downsample frequent words?
+                             # (or, increase # epochs)
                              epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
 
-        self.tracks_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
-        self.tracks_reverse_lookup = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        known_tracks_set = set(train_df["track_id"])
+        self.tracks_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") and int(word.split("=")[1]) in known_tracks_set ])
+        self.tracks_reverse_lookup = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") and int(word.split("=")[1]) in known_tracks_set ])
         self.tracks_lookup = { k: v for v, k in enumerate(self.tracks_reverse_lookup )}
-
-        self.known_tracks = list(set(tracks.index.values.tolist()))
-    
-    def train(self, train_df: pd.DataFrame):
-        # option 1: embed each user/track as a 1-hot vector
-
-        # TODO: currently only considering songs we see during
-        # training. In a future solution, we will generalize to
-        # unseen songs by considering their proximity in some
-        # embedding space (e.g. b/c they share the same author/album)
-        self.known_tracks = list(set(train_df["track_id"].values.tolist()))
-        self.train_df = train_df
-        # train_df = pd.concat([ train_df, augment_df(train_df) ])
         
         batch_size = 512
         n_epochs = 2
@@ -179,7 +204,7 @@ class MyModel(RecModel):
         ds = UserTrackDataset(X_users, X_tracks, self.device)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim, self.tracks_vecs).to(self.device)
+        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim, torch.tensor(self.tracks_vecs,device=self.device)).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
