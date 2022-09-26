@@ -62,8 +62,33 @@ class ContrastiveModel(nn.Module):
 
         return x_user, x_track_pos, x_track_neg
 
+def augment_df(train):
+    mapper = {}
+    for _, rows in train.groupby("artist_id"):
+        vals = rows.groupby(rows["track_id"]).size().index.tolist()
+        for v in vals:
+            mapper[v] = vals
+    # mapper now contains a dict with track_id: [ other track ids from same author ]
+
+    new_rows_num = 1 # how many rows should be added for each existing row
+    # TODO: choose users to enhance with criteria, instead of everybody
+
+#         # TODO: if we use user_track_count in the future, 
+#         # find a way of using having a meaningful value here 
+#         # (e.g. avg # of listened songs)
+
+#         # TODO: currently not weighting any song more than
+#         # others -- this should be fairer towards unfrequent songs.
+#         # consider whether additional weight should be put towards
+#         # uncommon songs
+#         # TODO: currently leaving the album untouched -- it should not be used as it is!
+#         # TODO: instead of drawing from pool of author, what if we draw from pool of album? *** important test <===
+    new_df = train.copy()
+    new_df["track_id"] = new_df["track_id"].map(lambda x : np.random.choice(mapper[x]))
+    return new_df
+
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, device=None):
+    def __init__(self, X_user, X_track, df_train, device=None):
         assert X_user.shape[0] == X_track.shape[0]
         self.device = device
 
@@ -101,6 +126,8 @@ class MyModel(RecModel):
         # embedding space (e.g. b/c they share the same author/album)
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
+        print("OK")
+        train_df = pd.concat([ train_df, augment_df(train_df) ])
         
         batch_size = 512
         n_epochs = 2
