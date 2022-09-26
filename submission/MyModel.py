@@ -21,7 +21,7 @@ def get_track_rel_weight(train_df, trait):
     ndx = gb.index.tolist()
     weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
-    weights = weights / weights.max()
+    weights = weights / weights.sum()
 
     mapper = dict(zip(ndx, weights))
     return train_df[trait].map(mapper.get)
@@ -40,45 +40,6 @@ def get_user_rel_weight(train_df, users_df, trait):
     mapper = dict(zip(ndx, weights))
     df_merged = train_df.merge(users_df.fillna("n"), left_on="user_id", right_index=True)
     return df_merged[trait].map(mapper.get)
-
-
-
-def get_artists_weight(train_df, n_bins=10):
-    gb = train_df.groupby("track_id").size()
-    artists = gb.index.tolist()
-    counts = gb.tolist()
-
-    bins = np.logspace(np.log10(min(counts)), np.log10(max(counts)), n_bins, base=10)
-    bins[-1]+=1
-
-    weights = np.histogram(counts, bins=bins)[0]
-    weights = weights/weights.sum()
-
-    mapper = dict(zip(artists, weights[np.digitize(counts, bins=bins)-1]))
-    return train_df["track_id"].map(mapper.get)
-
-def get_gender_weight(train_df, users_df):
-    gb = users_df.fillna("n").groupby("gender").size()
-    genders = gb.index.tolist()
-    weights = 1/gb.values
-    weights = weights / weights.sum()
-    gender_weights = dict(zip(genders, weights))
-    users_lookup = dict(zip(users_df.index, users_df["gender"].fillna("n").map(gender_weights.get)))
-    return train_df["user_id"].map(users_lookup.get)
-
-# class EpochLogger(CallbackAny2Vec):
-#     '''Callback to log information about training'''
-#     def __init__(self, n_epochs):
-#         self.bar = tqdm(n_epochs)
-
-#     def on_epoch_begin(self, model):
-#         self.bar.update()
-
-#     def on_epoch_end(self, model):
-#         self.bar.set_postfix(loss=model.get_latest_training_loss())
-    
-#     def on_train_end(self, model):
-#         self.bar.close()
 
 class UserEncoder(nn.Module):
     def __init__(self, in_size, out_size):
@@ -226,17 +187,11 @@ class MyModel(RecModel):
         self.X_tracks = X_tracks
 
         l = {
-            # .7246
-            # "artist_id": 1.5,
-            # "track_id": .75,
-            # "gender": 1.5,
-            # "country": 1,
-            # "user_track_count": 1,
-            "artist_id": 0.,
-            "track_id": 0.,
+            "artist_id": 1e4,
+            "track_id": 1e5,
             "gender": 1.,
-            "country": 1.,
-            "user_id": 1.,
+            "country": 100.,
+            "user_id": 1e4,
         }
         print(l)
         weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
@@ -248,8 +203,8 @@ class MyModel(RecModel):
 
 
         ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
-        wrs = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
-        dl = DataLoader(ds, batch_size=batch_size, sampler=wrs, num_workers=num_workers)
+        # wrs = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
@@ -269,7 +224,7 @@ class MyModel(RecModel):
                 for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (loss_func(anchor, pos, neg)).mean()
+                    loss = (w * loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
