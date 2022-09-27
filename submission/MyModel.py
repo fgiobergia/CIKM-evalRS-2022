@@ -75,7 +75,8 @@ class ContrastiveModel(nn.Module):
 
         return x_user, x_track_pos, x_track_neg
 
-def augment_df(train):
+def augment_df(train, new_rows_num=1):
+    # new_rows_num => how many rows should be added for each existing row
     mapper = {}
     for _, rows in train.groupby("artist_id"):
         vals = rows.groupby(rows["track_id"]).size().index.tolist()
@@ -83,7 +84,6 @@ def augment_df(train):
             mapper[v] = vals
     # mapper now contains a dict with track_id: [ other track ids from same author ]
 
-    new_rows_num = 1 # how many rows should be added for each existing row
     # TODO: choose users to enhance with criteria, instead of everybody
 
 #         # TODO: if we use user_track_count in the future, 
@@ -99,6 +99,28 @@ def augment_df(train):
     new_df = train.copy()
     new_df["track_id"] = new_df["track_id"].map(lambda x : np.random.choice(mapper[x]))
     return new_df
+
+def augment_df_user_aware(train, new_rows):
+    mapper = {}
+    for _, rows in train.groupby("artist_id"):
+        vals = rows.groupby(rows["track_id"]).size().index.tolist()
+        for v in vals:
+            mapper[v] = vals
+    
+    # probability proportional to # of artists the user listened to
+    # (the more "focused" the user is, the more likely )
+    ginis = train.groupby(["user_id","artist_id"]).size().groupby("user_id").apply(lambda grp: ((grp.values/grp.values.sum())**2).sum())
+    ginis = ginis ** 3 # TODO: decide how few users we should pick (3 --> 5 ?)
+    ginis = ginis / ginis.sum()
+
+    n_users = new_rows // 5 # TODO: decide how to vary this later!
+    users_pool = np.random.choice(ginis.index, p=ginis, size=n_users, replace=True)
+    
+    new_df = train[train["user_id"].isin(set(users_pool))].sample(new_rows, replace=True)
+    new_df["track_id"] = new_df["track_id"].map(lambda x : np.random.choice(mapper[x]))
+    return new_df
+
+
 
 class UserTrackDataset():
     def __init__(self, X_user, X_track, X_plays, w, device=None):
@@ -146,10 +168,10 @@ class MyModel(RecModel):
         # embedding space (e.g. b/c they share the same author/album)
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
-        # train_df = pd.concat([ train_df, augment_df(train_df) ])
+        train_df = pd.concat([ train_df, augment_df_user_aware(train_df, 1_000_000) ])
         
         batch_size = 512
-        n_epochs = 2
+        n_epochs = 4
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -174,8 +196,8 @@ class MyModel(RecModel):
             "artist_id": 1e4,
             "track_id": 1e5,
             "gender": 1.,
-            "country": 100.,
-            "user_id": 1e4,
+            "country": 300.,
+            "user_id": 3e4,
         }
         print(l)
         weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
@@ -187,7 +209,7 @@ class MyModel(RecModel):
 
 
         ds = UserTrackDataset(X_users, X_tracks, X_plays, weights.tolist(), self.device)
-        # wrs = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        wrs = WeightedRandomSampler(weights, num_samples=2 * len(weights), replacement=True)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
@@ -210,7 +232,7 @@ class MyModel(RecModel):
                 for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (w * loss_func(anchor, pos, neg)).mean()
+                    loss = (loss_func(anchor, pos, neg)).mean()
                     loss.backward()
                     opt.step()
 
