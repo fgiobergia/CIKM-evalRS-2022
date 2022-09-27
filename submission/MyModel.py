@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 from reclist.abstractions import RecModel
+
+import time
 import random
 
 # from gensim.models.callback import CallbackAny2Vec
@@ -87,23 +89,58 @@ def augment_df(train):
     new_df["track_id"] = new_df["track_id"].map(lambda x : np.random.choice(mapper[x]))
     return new_df
 
+def cossim(a, b):
+    return (a @ b.T) / ((((a**2).sum(axis=1))**.5).reshape(-1,1) * ((b**2).sum(axis=1))**.5)
+
 class UserTrackDataset():
-    def __init__(self, X_user, X_track, df_train, device=None):
+    def __init__(self, X_user, X_track, users_map, tracks_map, train_df, device):
         assert X_user.shape[0] == X_track.shape[0]
         self.device = device
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
+#
+        # self.rev_users_map = rev_users_map
+
+        self.listened = { users_map[k]: set([ tracks_map[i] for i in set(g["track_id"]) ]) for k, g in train_df.groupby("user_id") }
 
 
     def __len__(self):
         return self.X_user.shape[0]
+    
+    def update_neighbors(self, mat, closest=True):
+        use_top = 5
+        with torch.no_grad():
+            W = mat.cpu()
+            neighbors = cossim(W, W) # compute, for each neighbor, its NN (in terms of cosine similarity)
+        # user = [ self.rev_users_map[i] for i in range(mat.shape[0]) ]
+        # user_nn = neighbors.argmax(axis=1) # get closest one for each row (TODO: this can be done in a soft way -- currently taking hard neighbor)
+        # taking 1: to avoid "itself" (expecting it to always be in the 1st position -- as its cosdist is 1)
+        if closest:
+            user_nn = neighbors.topk(use_top+1).indices[:,1:].tolist() # take most similar neighbor
+        else:
+            user_nn = (-neighbors).topk(use_top).indices.tolist() # take least similar neighbor
+
+        self.songs_pool = {}
+        for k, nns in enumerate(user_nn):
+            # for the k-th user, consider as negatives
+            # the songs listened by `nn` but not by `k`
+            for nn in nns:
+                diff = self.listened[nn] - self.listened[k]
+                # pick the 1st neighbor that has a non-empty intersection
+                # (typically will be the 1st neighbor -- might be a subsequent
+                # one if all songs are in common)
+                if diff:
+                    self.songs_pool[k] = torch.tensor(list(diff), device=self.device)
+                    break
 
     def __getitem__(self, i):
         x_user = self.X_user[i]
         x_track_pos = self.X_track[i]
-        j = random.randint(0, len(self)-1)
-        x_track_neg = self.X_track[j]
+        sp = self.songs_pool[x_user.item()] # pool of songs for the specific user
+        j = random.randint(0, len(sp)-1)
+        # x_track_neg = self.X_track[j]
+        x_track_neg = sp[j]
         
         return x_user, x_track_pos, x_track_neg
 
@@ -129,7 +166,7 @@ class MyModel(RecModel):
         # train_df = pd.concat([ train_df, augment_df(train_df) ])
         
         batch_size = 512
-        n_epochs = 2
+        n_epochs = 3 
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
@@ -148,22 +185,24 @@ class MyModel(RecModel):
         self.X_users = X_users
         self.X_tracks = X_tracks
 
-        ds = UserTrackDataset(X_users, X_tracks, self.device)
+        ds = UserTrackDataset(X_users, X_tracks, self.user_map, self.track_map, train_df, self.device)
+        self.ds = ds
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
         opt = optim.Adam(self.cmodel.parameters())
 
         def cos_dist():
-            cossim = nn.CosineSimilarity()
+            cossm = nn.CosineSimilarity()
             def func(*args, **kwargs):
-                return 1 - cossim(*args, **kwargs)
+                return 1 - cossm(*args, **kwargs)
             return func
         loss_func = nn.TripletMarginWithDistanceLoss(margin=margin, distance_function=cos_dist())
         print("Training with", len(ds), "records", len(self.user_map), "users", len(self.track_map), "tracks")
 
         for epoch in range(n_epochs):
             print(f"Epoch {epoch+1}/{n_epochs}")
+            ds.update_neighbors(self.cmodel.user_enc.mat, closest=True)
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
@@ -196,11 +235,11 @@ class MyModel(RecModel):
         try:
             self.cmodel.eval()
             print("Loading user embeddings")
-            users_emb = (torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_users.shape[0]//bs+1)] )).cpu().detach().numpy()
+            users_emb = torch.vstack( [ self.cmodel.user_enc(torch.tensor(X_users[i*bs:(i+1)*bs]).to(self.device)) for i in range(X_users.shape[0]//bs+1)] )
 
             print("Loading tracks embeddings")
             X_tracks = np.array([ self.track_map[i] for i in self.known_tracks]).reshape(-1,1)
-            tracks_emb = (torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)).detach().cpu() for i in range(X_tracks.shape[0]//bs+1)] )).cpu().detach().numpy()
+            tracks_emb = torch.vstack( [ self.cmodel.track_enc(torch.tensor(X_tracks[i*bs:(i+1)*bs]).to(self.device)) for i in range(X_tracks.shape[0]//bs+1)] )
         finally:
             self.cmodel.train()
 
@@ -208,10 +247,12 @@ class MyModel(RecModel):
         self.track_emb = tracks_emb
 
         print("Computing cosine similarities")
-        cos_mat = cosine_similarity(users_emb, tracks_emb)
+        start = time.time()
+        # cos_mat = cossim(users_emb, tracks_emb).cpu().detach().numpy()
+        cos_mat = cosine_similarity(users_emb.cpu().detach().numpy(), tracks_emb.cpu().detach().numpy())
+        stop = time.time()
+        print("Similarities computed in", stop-start, "seconds")
         self.cos_mat = cos_mat
-
-        print("Sorting similarities")
 
         known_tracks_array = np.array(self.known_tracks)
         assert len(user_ids) == cos_mat.shape[0]
@@ -222,11 +263,11 @@ class MyModel(RecModel):
             known_likes[user] = set(grp["track_id"])
 
         overlaps = []
-        horizon = 1
+        horizon = 5
         print("Predictions with", users_emb.shape[0], "users", tracks_emb.shape[0], "tracks")
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
-                curr_k = self.top_k + len(known_likes[int(user_ids.iloc[i])])
+                curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])
 
                 parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
                 cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
