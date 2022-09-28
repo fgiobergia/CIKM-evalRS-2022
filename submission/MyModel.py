@@ -38,7 +38,9 @@ class UserEncoder(nn.Module):
         self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        return self.mat[x.flatten()]
+        batch_size, n_elements = x.shape
+        return self.mat[x.flatten()].reshape(batch_size, n_elements, -1)
+        # return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
@@ -49,7 +51,9 @@ class TrackEncoder(nn.Module):
         self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        return self.mat[x.flatten()]
+        # return self.mat[x.flatten()]
+        batch_size, n_elements = x.shape
+        return self.mat[x.flatten()].reshape(batch_size, n_elements, -1)
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
@@ -57,12 +61,15 @@ class ContrastiveModel(nn.Module):
         self.user_enc = UserEncoder(user_size, n_dim)
         self.track_enc = TrackEncoder(track_size, n_dim)
     
-    def forward(self, x_user, x_track_pos, x_track_neg):
+    def forward(self, x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor):
         x_user = self.user_enc(x_user)
+        x_user_pos = self.user_enc(x_user_pos)
+        x_user_neg = self.user_enc(x_user_neg).mean(axis=1)
         x_track_pos = self.track_enc(x_track_pos)
-        x_track_neg = self.track_enc(x_track_neg)
+        x_track_neg = self.track_enc(x_track_neg).mean(axis=1)
+        x_track_anchor = self.track_enc(x_track_anchor)
 
-        return x_user, x_track_pos, x_track_neg
+        return x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor
 
 def augment_df(train):
     mapper = {}
@@ -99,10 +106,18 @@ class UserTrackDataset():
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
+
+        self.neg_tracks_num = 5
+        self.neg_users_num = 5
 #
         # self.rev_users_map = rev_users_map
 
-        self.listened = { users_map[k]: set([ tracks_map[i] for i in set(g["track_id"]) ]) for k, g in train_df.groupby("user_id") }
+        # contains : user: { songs listened }
+        self.listened_set = { users_map[k]: set([ tracks_map[i] for i in set(g["track_id"]) ]) for k, g in train_df.groupby("user_id") }
+        self.listened = { k: torch.tensor(list(v), device=self.device) for k,v in self.listened_set.items() }
+
+        # contains: song : { users listening }
+        self.listeners = { tracks_map[k]: torch.tensor(list(set([ users_map[i] for i in set(g["user_id"]) ])), device=self.device) for k, g in train_df.groupby("track_id") }
 
 
     def __len__(self):
@@ -117,6 +132,10 @@ class UserTrackDataset():
         # user_nn = neighbors.argmax(axis=1) # get closest one for each row (TODO: this can be done in a soft way -- currently taking hard neighbor)
         # taking 1: to avoid "itself" (expecting it to always be in the 1st position -- as its cosdist is 1)
         if closest:
+            # topk = neighbors.topk(use_top+1)
+            # topk_ind = topk.indices[:,1:].numpy()
+            # topk_val = (topk.values[:,1:] / topk.values[:,1:].sum(axis=1).reshape(-1,1)).numpy()
+            # user_nn = [ np.random.choice(topk_ind[i], p=topk_val[i]) for i in range(topk_ind.shape[0]) ]
             user_nn = neighbors.topk(use_top+1).indices[:,1:].tolist() # take most similar neighbor
         else:
             user_nn = (-neighbors).topk(use_top).indices.tolist() # take least similar neighbor
@@ -125,8 +144,9 @@ class UserTrackDataset():
         for k, nns in enumerate(user_nn):
             # for the k-th user, consider as negatives
             # the songs listened by `nn` but not by `k`
+            # for nn in [nns]:
             for nn in nns:
-                diff = self.listened[nn] - self.listened[k]
+                diff = self.listened_set[nn] - self.listened_set[k]
                 # pick the 1st neighbor that has a non-empty intersection
                 # (typically will be the 1st neighbor -- might be a subsequent
                 # one if all songs are in common)
@@ -137,12 +157,25 @@ class UserTrackDataset():
     def __getitem__(self, i):
         x_user = self.X_user[i]
         x_track_pos = self.X_track[i]
-        sp = self.songs_pool[x_user.item()] # pool of songs for the specific user
-        j = random.randint(0, len(sp)-1)
+        # sp = self.X_track # <== choose a song randomly
+        sp = self.songs_pool[x_user.item()] # choose a song from pool of songs for the specific user
+        j = np.random.randint(0, len(sp)-1, size=self.neg_tracks_num)
         # x_track_neg = self.X_track[j]
         x_track_neg = sp[j]
+
+        up = self.listeners[x_track_pos.item()]
+        k = random.randint(0, len(up)-1)
+        x_user_pos = up[k].reshape(1)
+
+        up = self.listeners[x_track_neg[0].item()]
+        k = np.random.randint(0, len(up)-1, size=self.neg_users_num)
+        x_user_neg = up[k]
+
+        sp = self.listened[x_user.item()]
+        k = random.randint(0, len(sp)-1)
+        x_track_anchor = sp[k].reshape(1)
         
-        return x_user, x_track_pos, x_track_neg
+        return x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor
 
 class MyModel(RecModel):
 
@@ -164,12 +197,23 @@ class MyModel(RecModel):
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
         # train_df = pd.concat([ train_df, augment_df(train_df) ])
-        
+
+        #  0.58       
+        # batch_size = 512
+        # n_epochs = 2
+        # shared_emb_dim = 256
+        # num_workers = 4
+        # margin = .75
+        # lmbda1 = 3.
+        # lmbda2 = .5
         batch_size = 512
-        n_epochs = 3 
+        n_epochs = 2
         shared_emb_dim = 256
         num_workers = 4
         margin = .75
+        lmbda1 = .5
+        lmbda2 = .3
+
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -206,10 +250,10 @@ class MyModel(RecModel):
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-                for i, (x_users, x_tracks_pos, x_tracks_neg) in bar:
+                for i, (x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor) in bar:
                     opt.zero_grad()
-                    anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = loss_func(anchor, pos, neg)
+                    anchor, track_pos, track_neg, user_pos, user_neg, track_anchor = self.cmodel(x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor)
+                    loss = loss_func(anchor, track_pos, track_neg) + lmbda1 * loss_func(anchor, user_pos, user_neg) + lmbda2 * loss_func(track_anchor, track_pos, track_neg)
                     loss.backward()
                     opt.step()
 
@@ -263,7 +307,7 @@ class MyModel(RecModel):
             known_likes[user] = set(grp["track_id"])
 
         overlaps = []
-        horizon = 5
+        horizon = 1
         print("Predictions with", users_emb.shape[0], "users", tracks_emb.shape[0], "tracks")
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
