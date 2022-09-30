@@ -1,6 +1,6 @@
-# from evaluation.EvalRSRunner import ChallengeDataset
-# dataset = ChallengeDataset()
-# train, test = dataset.get_sample_train_test()
+from evaluation.EvalRSRunner import ChallengeDataset
+dataset = ChallengeDataset()
+train, test = dataset.get_sample_train_test()
 
 
 from collections import Counter
