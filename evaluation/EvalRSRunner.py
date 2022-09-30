@@ -381,6 +381,8 @@ class EvalRSRunner:
         if debug:
             time_for_submission = (time.time() - start)/60
             print(f"Entire Process Duration: {time_for_submission} Minutes")
+        
+        return leaderboard_score, agg_results
 
     def __hash__(self):
         hash_inputs = [

@@ -38,9 +38,7 @@ class UserEncoder(nn.Module):
         self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        batch_size, n_elements = x.shape
-        return self.mat[x.flatten()].reshape(batch_size, n_elements, -1)
-        # return self.mat[x.flatten()]
+        return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
@@ -51,9 +49,7 @@ class TrackEncoder(nn.Module):
         self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
     
     def forward(self, x):
-        # return self.mat[x.flatten()]
-        batch_size, n_elements = x.shape
-        return self.mat[x.flatten()].reshape(batch_size, n_elements, -1)
+        return self.mat[x.flatten()]
 
 class ContrastiveModel(nn.Module):
     def __init__(self, user_size, track_size, n_dim):
@@ -64,9 +60,9 @@ class ContrastiveModel(nn.Module):
     def forward(self, x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor):
         x_user = self.user_enc(x_user)
         x_user_pos = self.user_enc(x_user_pos)
-        x_user_neg = self.user_enc(x_user_neg).mean(axis=1)
+        x_user_neg = self.user_enc(x_user_neg)
         x_track_pos = self.track_enc(x_track_pos)
-        x_track_neg = self.track_enc(x_track_neg).mean(axis=1)
+        x_track_neg = self.track_enc(x_track_neg)
         x_track_anchor = self.track_enc(x_track_anchor)
 
         return x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor
@@ -106,9 +102,6 @@ class UserTrackDataset():
 
         self.X_user = torch.tensor(X_user, device=self.device)
         self.X_track = torch.tensor(X_track, device=self.device)
-
-        self.neg_tracks_num = 5
-        self.neg_users_num = 5
 #
         # self.rev_users_map = rev_users_map
 
@@ -159,7 +152,7 @@ class UserTrackDataset():
         x_track_pos = self.X_track[i]
         # sp = self.X_track # <== choose a song randomly
         sp = self.songs_pool[x_user.item()] # choose a song from pool of songs for the specific user
-        j = np.random.randint(0, len(sp)-1, size=self.neg_tracks_num)
+        j = random.randint(0, len(sp)-1)
         # x_track_neg = self.X_track[j]
         x_track_neg = sp[j]
 
@@ -167,8 +160,8 @@ class UserTrackDataset():
         k = random.randint(0, len(up)-1)
         x_user_pos = up[k].reshape(1)
 
-        up = self.listeners[x_track_neg[0].item()]
-        k = np.random.randint(0, len(up)-1, size=self.neg_users_num)
+        up = self.listeners[x_track_neg.item()]
+        k = random.randint(0, len(up)-1)
         x_user_neg = up[k]
 
         sp = self.listened[x_user.item()]
@@ -186,6 +179,9 @@ class MyModel(RecModel):
             pass
         self.top_k = top_k
         self.known_tracks = list(set(tracks.index.values.tolist()))
+        # self.lambda1 = kwargs["lambda1"]
+        # self.lambda2 = kwargs["lambda2"]
+        # self.margin = kwargs["margin"]
     
     def train(self, train_df: pd.DataFrame):
         # option 1: embed each user/track as a 1-hot vector
@@ -208,11 +204,11 @@ class MyModel(RecModel):
         # lmbda2 = .5
         batch_size = 512
         n_epochs = 2
-        shared_emb_dim = 256
+        shared_emb_dim = 128
         num_workers = 4
-        margin = .75
-        lmbda1 = .5
-        lmbda2 = .3
+        lmbda1 = 3. #self.lambda1 #5.
+        lmbda2 = .5 #self.lambda2 #3.
+        margin = 0.5 #self.margin #.75
 
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
@@ -234,7 +230,7 @@ class MyModel(RecModel):
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
-        opt = optim.Adam(self.cmodel.parameters())
+        opt = optim.Adam(self.cmodel.parameters(), weight_decay=0.)
 
         def cos_dist():
             cossm = nn.CosineSimilarity()
