@@ -21,6 +21,7 @@ def get_track_rel_weight(train_df, trait):
     # trait: artist_id, track_id, user_id
     gb = train_df.groupby(trait)["user_track_count"].sum()
     ndx = gb.index.tolist()
+    # weights = 1/np.log(gb.values+1)
     weights = 1/np.log(gb.values+1)
     # weights = (weights - weights.min()) / (weights.max() - weights.min())
     weights = weights / weights.sum()
@@ -217,22 +218,16 @@ class MyModel(RecModel):
             pass
         self.top_k = top_k
         self.known_tracks = list(set(tracks.index.values.tolist()))
-        # self.lambda1 = kwargs["lambda1"]
-        # self.lambda2 = kwargs["lambda2"]
-        # self.margin = kwargs["margin"]
+        self.lambda1 = kwargs.get("lambda1", 1.)
+        self.lambda2 = kwargs.get("lambda2", 2.)
+        self.margin = kwargs.get("margin", .25)
         self.users_df = users
     
     def train(self, train_df: pd.DataFrame):
-        # option 1: embed each user/track as a 1-hot vector
-
-        # TODO: currently only considering songs we see during
-        # training. In a future solution, we will generalize to
-        # unseen songs by considering their proximity in some
-        # embedding space (e.g. b/c they share the same author/album)
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
         # train_df = pd.concat([ train_df, augment_df(train_df) ])
-        train_df = pd.concat([ train_df, augment_df_user_aware(train_df, 1_000_000) ])
+        # train_df = pd.concat([ train_df, augment_df_user_aware(train_df, 1_000_000) ])
 
         #  0.58       
         # batch_size = 512
@@ -246,9 +241,12 @@ class MyModel(RecModel):
         n_epochs = 2
         shared_emb_dim = 128
         num_workers = 4
-        lmbda1 = 3. #self.lambda1 #5.
-        lmbda2 = .5 #self.lambda2 #3.
-        margin = 0.5 #self.margin #.75
+        lmbda1 = self.lambda1
+        lmbda2 = self.lambda2
+        margin = self.margin
+        # lmbda1 = 2.
+        # lmbda2 = 2.
+        # margin = 0.25
 
         print("batch size", batch_size, "#epochs", n_epochs, "emb dim", shared_emb_dim, "margin", margin)
 
@@ -284,8 +282,8 @@ class MyModel(RecModel):
 
 
         ds = UserTrackDataset(X_users, X_tracks, self.user_map, self.track_map, train_df, X_plays, weights.tolist(), self.device)
-        wrs = WeightedRandomSampler(weights, num_samples=2 * len(weights), replacement=True)
-
+        # wrs = WeightedRandomSampler(weights, num_samples=2*len(weights), replacement=True)
+        # dl = DataLoader(ds, batch_size=batch_size, sampler=wrs, num_workers=num_workers)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
         self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
@@ -306,17 +304,17 @@ class MyModel(RecModel):
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
                 alpha = .8 # damp
-<<<<<<< HEAD
+
                 for i, (x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor, w, w_p) in bar:
                     opt.zero_grad()
                     anchor, track_pos, track_neg, user_pos, user_neg, track_anchor = self.cmodel(x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor)
-                    loss = loss_func(anchor, track_pos, track_neg) + lmbda1 * loss_func(anchor, user_pos, user_neg) + lmbda2 * loss_func(track_anchor, track_pos, track_neg)
-=======
-                for i, (x_users, x_tracks_pos, x_tracks_neg, w, w_p) in bar:
-                    opt.zero_grad()
-                    anchor, pos, neg = self.cmodel(x_users, x_tracks_pos, x_tracks_neg)
-                    loss = (loss_func(anchor, pos, neg)).mean()
->>>>>>> weighted-rows
+                    loss = (w * (loss_func(anchor, track_pos, track_neg) \
+                            + lmbda1 * loss_func(anchor, user_pos, user_neg) \
+                            + lmbda2 * loss_func(track_anchor, track_pos, track_neg) \
+                            # + 1 * loss_func(track_anchor, user_pos, user_neg)
+                            )).mean()
+                            
+
                     loss.backward()
                     opt.step()
 

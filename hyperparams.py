@@ -22,7 +22,7 @@ if __name__ == '__main__':
     from evaluation.EvalRSRunner import ChallengeDataset
     from submission.MyModel import * 
 
-    dataset = ChallengeDataset(seed=1234, num_folds=1)
+    dataset = ChallengeDataset(seed=9876, num_folds=1)
     runner = EvalRSRunner(
         dataset=dataset,
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -32,13 +32,25 @@ if __name__ == '__main__':
         email=EMAIL
         )
     
-    # lambda1 = [ .5, 1., 5., 10]
-    # lambda2 = [ .5, 1., 5., 10]
-    # margin = [ 0., .5, 1., 3 ]
-    # res = {}
+    # # lambda1 = [ .5, 1., 5., 10]
+    # # lambda2 = [ .5, 1., 5., 10]
+    # # margin = [ 0., .5, 1., 3 ]
+    # lambda1 = [ .5, 1., 2. ]
+    # lambda2 = [ .5, 1., 2. ]
+    # margin = [.25, .5, .75 ]
+    # with open("out.json") as f:
+    #     res = json.load(f)
+    # # res = {}
+
+    # cont = False
     # for l1 in lambda1:
     #     for l2 in lambda2:
     #         for m in margin:
+    #             if l1 == 2. and l2 == 2. and m == .75:
+    #                 cont = True
+    #             if not cont:
+    #                 continue
+    #             print("Config", l1, l2, m)
     #             my_model = MyModel(dataset.df_tracks, dataset.df_users, lambda1=l1, lambda2=l2,margin=m)
     #             score, agg_res = runner.evaluate(model=my_model)
     #             print(f"lambda1 = {l1}, lambda2 = {l2}, margin={m}, result={score}")
@@ -48,27 +60,26 @@ if __name__ == '__main__':
     # print(res)
 
 
-    params = [[10 , 0.5 , 1.0 ],
-            [0.5, 0.5 , 1.0 ],
-            [10 , 0.5 , 0.5 ],
-            [0.5, 1.0 , 0.5 ],
-            [1.0, 0.5 , 0.5 ],
-            [5.0, 1.0 , 0.5 ],
-            [0.5, 5.0 , 0.5 ],
-            [5.0, 0.5 , 0.5 ],
-            [5.0, 0.5 , 1.0 ],
-            [0.5, 0.5 , 0.5 ],
-            [10 , 1.0 , 0.5 ],
-            [1.0, 5.0 , 0.5 ],
-            [1.0, 1.0 , 0.5 ],
-            [5.0, 5.0 , 0.5 ],
-            [1.0, 0.5 , 1.0 ]]
+    params = [[0.5, 1.0, 0.5],
+              [0.5, 2.0, 0.25],
+              [0.5, 2.0, 0.75],
+              [1.0, 0.5, 0.75],
+              [1.0, 0.5, 0.25],
+              [2.0, 1.0, 0.25],
+              [2.0, 2.0, 0.5],
+              [1.0, 2.0, 0.25],
+              [2.0, 1.0, 0.75],
+              [1.0, 1.0, 0.25],
+              [2.0, 0.5, 0.25],
+              [0.5, 2.0, 0.5],
+              [1.0, 2.0, 0.5],
+              [2.0, 2.0, 0.25]]
     res = {}
-    for l1, l2, m in params:
+    for l1, l2, m in params[::-1]:
         my_model = MyModel(dataset.df_tracks, dataset.df_users, lambda1=l1, lambda2=l2,margin=m)
         score, agg_res = runner.evaluate(model=my_model)
         print(f"lambda1 = {l1}, lambda2 = {l2}, margin={m}, result={score}")
         res[f"l1={l1} l2={l2} m={m}"] = score, agg_res
-        with open("out-seed-1234.json", "w") as f:
+        with open("out-2-9876.json", "w") as f:
             json.dump(res, f)
     print(res)
