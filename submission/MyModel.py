@@ -218,9 +218,28 @@ class MyModel(RecModel):
             pass
         self.top_k = top_k
         self.known_tracks = list(set(tracks.index.values.tolist()))
+        # self.lambda1 = kwargs.get("lambda1", 2.)
+        # self.lambda2 = kwargs.get("lambda2", .5)
+        # self.margin = kwargs.get("margin", .25)
         self.lambda1 = kwargs.get("lambda1", 1.)
         self.lambda2 = kwargs.get("lambda2", 2.)
         self.margin = kwargs.get("margin", .25)
+
+        # default_coef = {
+        #     "artist_id": 1e4,
+        #     "track_id": 1e5,
+        #     "gender": 1.,
+        #     "country": 300.,
+        #     "user_id": 3e4,
+        # }
+
+        # default_coef = {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0}
+        # default_coef = {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0}
+        default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0}
+        # default_coef = {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0}
+
+
+        self.coef = kwargs.get("coef", default_coef)
         self.users_df = users
     
     def train(self, train_df: pd.DataFrame):
@@ -265,19 +284,12 @@ class MyModel(RecModel):
         self.X_users = X_users
         self.X_tracks = X_tracks
 
-        l = {
-            "artist_id": 1e4,
-            "track_id": 1e5,
-            "gender": 1.,
-            "country": 300.,
-            "user_id": 3e4,
-        }
-        print(l)
-        weights = get_track_rel_weight(train_df, "artist_id") * l["artist_id"] + \
-                  get_track_rel_weight(train_df, "track_id") * l["track_id"] + \
-                  get_track_rel_weight(train_df, "user_id") * l["user_id"] + \
-                  get_user_rel_weight(train_df, self.users_df, "gender") * l["gender"] + \
-                  get_user_rel_weight(train_df, self.users_df, "country") * l["country"]
+        print(self.coef)
+        weights = get_track_rel_weight(train_df, "artist_id") * self.coef["artist_id"] + \
+                  get_track_rel_weight(train_df, "track_id") * self.coef["track_id"] + \
+                  get_track_rel_weight(train_df, "user_id") * self.coef["user_id"] + \
+                  get_user_rel_weight(train_df, self.users_df, "gender") * self.coef["gender"] + \
+                  get_user_rel_weight(train_df, self.users_df, "country") * self.coef["country"]
         weights = torch.tensor(weights.values)
 
 
@@ -368,7 +380,7 @@ class MyModel(RecModel):
             known_likes[user] = set(grp["track_id"])
 
         overlaps = []
-        horizon = 1
+        horizon = 5
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])

@@ -3,6 +3,8 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 
+from sklearn.model_selection import ParameterGrid
+
 # import env variables from file
 load_dotenv('upload.env', verbose=True)
 
@@ -22,7 +24,7 @@ if __name__ == '__main__':
     from evaluation.EvalRSRunner import ChallengeDataset
     from submission.MyModel import * 
 
-    dataset = ChallengeDataset(seed=9876, num_folds=1)
+    dataset = ChallengeDataset(seed=999888, num_folds=1)
     runner = EvalRSRunner(
         dataset=dataset,
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -60,26 +62,72 @@ if __name__ == '__main__':
     # print(res)
 
 
-    params = [[0.5, 1.0, 0.5],
-              [0.5, 2.0, 0.25],
-              [0.5, 2.0, 0.75],
-              [1.0, 0.5, 0.75],
-              [1.0, 0.5, 0.25],
-              [2.0, 1.0, 0.25],
-              [2.0, 2.0, 0.5],
-              [1.0, 2.0, 0.25],
-              [2.0, 1.0, 0.75],
-              [1.0, 1.0, 0.25],
-              [2.0, 0.5, 0.25],
-              [0.5, 2.0, 0.5],
-              [1.0, 2.0, 0.5],
-              [2.0, 2.0, 0.25]]
+    # params = [[0.5, 1.0, 0.5],
+    #           [0.5, 2.0, 0.25],
+    #           [0.5, 2.0, 0.75],
+    #           [1.0, 0.5, 0.75],
+    #           [1.0, 0.5, 0.25],
+    #           [2.0, 1.0, 0.25],
+    #           [2.0, 2.0, 0.5],
+    #           [1.0, 2.0, 0.25],
+    #           [2.0, 1.0, 0.75],
+    #           [1.0, 1.0, 0.25],
+    #           [2.0, 0.5, 0.25],
+    #           [0.5, 2.0, 0.5],
+    #           [1.0, 2.0, 0.5],
+    #           [2.0, 2.0, 0.25]]
+    # res = {}
+    # for l1, l2, m in params[::-1]:
+    #     my_model = MyModel(dataset.df_tracks, dataset.df_users, lambda1=l1, lambda2=l2,margin=m)
+    #     score, agg_res = runner.evaluate(model=my_model)
+    #     print(f"lambda1 = {l1}, lambda2 = {l2}, margin={m}, result={score}")
+    #     res[f"l1={l1} l2={l2} m={m}"] = score, agg_res
+    #     with open("out-2-9876.json", "w") as f:
+    #         json.dump(res, f)
+    # print(res)
+
+
+    # res = {}
+
+    configs = list(ParameterGrid({
+        "artist_id": [ 0, 1e4, 5e4, 1e5 ],
+        "track_id": [ 0, 1e5, 5e5, 1e6 ],
+        "gender": [ 0, 1, 5, 10 ],
+        "country": [0, 100, 500, 1000 ],
+        "user_id": [ 0, 1e4, 5e4, 1e5]
+    }))
+    np.random.seed(99)
+    choices = np.random.choice(configs, size=100, replace=False)
+
+    # for config in choices:
+    #     my_model = MyModel(dataset.df_tracks, dataset.df_users, coef=config)
+    #     score, agg_res = runner.evaluate(model=my_model)
+    #     print(f"{config}, result={score}")
+    #     res[f"{config}"] = score, agg_res
+    #     with open("out-coef-123456.json", "w") as f:
+    #         json.dump(res, f)
+
     res = {}
-    for l1, l2, m in params[::-1]:
-        my_model = MyModel(dataset.df_tracks, dataset.df_users, lambda1=l1, lambda2=l2,margin=m)
+    # choices = [{'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0},
+    #             {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0},
+    #             {'artist_id': 50000.0, 'country': 100, 'gender': 5, 'track_id': 500000.0, 'user_id': 50000.0},
+    #             {'artist_id': 50000.0, 'country': 1000, 'gender': 1, 'track_id': 1000000.0, 'user_id': 50000.0},
+    #             {'artist_id': 10000.0, 'country': 0, 'gender': 1, 'track_id': 500000.0, 'user_id': 0},
+    #             {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0},
+    #             {'artist_id': 100000.0, 'country': 100, 'gender': 10, 'track_id': 100000.0, 'user_id': 50000.0},
+    #             {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0},
+    #             {'artist_id': 100000.0, 'country': 1000, 'gender': 10, 'track_id': 0, 'user_id': 10000.0},
+    #             {'artist_id': 10000.0, 'country': 0, 'gender': 5, 'track_id': 0, 'user_id': 50000.0}]
+
+    # choices = [{'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0},
+    #            {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0},
+    #            {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0},
+    #            {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0}]
+
+    for config in choices:
+        my_model = MyModel(dataset.df_tracks, dataset.df_users, coef=config)
         score, agg_res = runner.evaluate(model=my_model)
-        print(f"lambda1 = {l1}, lambda2 = {l2}, margin={m}, result={score}")
-        res[f"l1={l1} l2={l2} m={m}"] = score, agg_res
-        with open("out-2-9876.json", "w") as f:
+        print(f"{config}, result={score}")
+        res[f"{config}"] = score, agg_res
+        with open("out-coef-999888.json", "w") as f:
             json.dump(res, f)
-    print(res)
