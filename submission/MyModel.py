@@ -379,7 +379,7 @@ class MyModel(RecModel):
         for user, grp in self.train_df.groupby("user_id"):
             known_likes[user] = set(grp["track_id"])
 
-        overlaps = []
+        # overlaps = []
         horizon = 5
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
@@ -387,16 +387,9 @@ class MyModel(RecModel):
 
                 parts = np.argpartition(-cos_mat[i], kth=curr_k)[:curr_k]
                 cos_mat_sub = known_tracks_array[parts[np.argsort(-cos_mat[i,parts])]]
-                chosen = np.zeros(self.top_k * horizon)
-                j = 0
-                k = 0
-                overlaps.append(len(set(cos_mat_sub)&known_likes[int(user_ids.iloc[i])]) / len(known_likes[int(user_ids.iloc[i])]))
-                ### TODO: overlap between found and known is small!!!
-                while k < self.top_k * horizon:
-                    if cos_mat_sub[j] not in known_likes[int(user_ids.iloc[i])]:
-                        chosen[k] = cos_mat_sub[j]
-                        k += 1
-                    j += 1
+
+                rank = { v: k for k,v in enumerate(cos_mat_sub) }
+                chosen = np.array(sorted(set(cos_mat_sub) - known_likes[int(user_ids.iloc[i])], key=rank.get))[:self.top_k * horizon]
 
                 p = 1/(1+np.arange(len(chosen)))# + 1 * tracks_pop[chosen].values + 1 * tracks_artist_pop[chosen].values
 
@@ -405,10 +398,10 @@ class MyModel(RecModel):
             
                 results[i] = chosen[sorted(subset)] #sort_by_order(chosen, subset)
             
-            print("Overlaps report")
-            print("mean", np.mean(overlaps))
-            print("std", np.std(overlaps))
-            print("max", np.max(overlaps), "min", np.min(overlaps))
+            # print("Overlaps report")
+            # print("mean", np.mean(overlaps))
+            # print("std", np.std(overlaps))
+            # print("max", np.max(overlaps), "min", np.min(overlaps))
 
         preds = results
         data = np.hstack([ user_ids["user_id"].values.reshape(-1, 1), preds ])
