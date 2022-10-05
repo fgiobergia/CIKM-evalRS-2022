@@ -24,7 +24,7 @@ if __name__ == '__main__':
     from evaluation.EvalRSRunner import ChallengeDataset
     from submission.MyModel import * 
 
-    dataset = ChallengeDataset(seed=3336467662, num_folds=1)
+    dataset = ChallengeDataset(seed=112314545, num_folds=1)
     runner = EvalRSRunner(
         dataset=dataset,
         aws_access_key_id=AWS_ACCESS_KEY,
@@ -96,8 +96,14 @@ if __name__ == '__main__':
     #     "country": [0, 100, 500, 1000 ],
     #     "user_id": [ 0, 1e4, 5e4, 1e5]
     # }))
-    # np.random.seed(99)
-    # choices = np.random.choice(configs, size=100, replace=False)
+    configs = list(ParameterGrid({
+        "lambda1": np.linspace(0, 10, 5),
+        "lambda2": np.linspace(0, 10, 5),
+        "margin": np.linspace(0.1, .9, 5),
+    }))
+
+    np.random.seed(9493)
+    choices = np.random.choice(configs, size=50, replace=False)
 
     # for config in choices:
     #     my_model = MyModel(dataset.df_tracks, dataset.df_users, coef=config)
@@ -125,25 +131,26 @@ if __name__ == '__main__':
     #            {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0}]
 
 
-    choices = [{'artist_id': 10000.0, 'country': 0, 'gender': 0, 'track_id': 0, 'user_id': 50000.0},
-        {'artist_id': 100000.0, 'country': 500, 'gender': 10, 'track_id': 0, 'user_id': 50000.0},
-        {'artist_id': 10000.0, 'country': 0, 'gender': 10, 'track_id': 100000.0, 'user_id': 0},
-        {'artist_id': 0, 'country': 100, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0},
-        {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0},
-        {'artist_id': 10000.0, 'country': 1000, 'gender': 1, 'track_id': 0, 'user_id': 0},
-        {'artist_id': 50000.0, 'country': 0, 'gender': 10, 'track_id': 1000000.0, 'user_id': 0},
-        {'artist_id': 10000.0, 'country': 1000, 'gender': 1, 'track_id': 0, 'user_id': 50000.0},
-        {'artist_id': 100000.0, 'country': 1000, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0},
-        {'artist_id': 10000.0, 'country': 100, 'gender': 10, 'track_id': 0, 'user_id': 0},
-        {'artist_id': 10000.0, 'country': 0, 'gender': 5, 'track_id': 100000.0, 'user_id': 100000.0},
-        {'artist_id': 0, 'country': 500, 'gender': 1, 'track_id': 500000.0, 'user_id': 0},
-        {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0},
-        {'artist_id': 50000.0, 'country': 1000, 'gender': 1, 'track_id': 1000000.0, 'user_id': 50000.0},
-        {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 1000000.0, 'user_id': 50000.0}]
+    # choices = [{'artist_id': 10000.0, 'country': 0, 'gender': 0, 'track_id': 0, 'user_id': 50000.0},
+    #     {'artist_id': 100000.0, 'country': 500, 'gender': 10, 'track_id': 0, 'user_id': 50000.0},
+    #     {'artist_id': 10000.0, 'country': 0, 'gender': 10, 'track_id': 100000.0, 'user_id': 0},
+    #     {'artist_id': 0, 'country': 100, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0},
+    #     {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0},
+    #     {'artist_id': 10000.0, 'country': 1000, 'gender': 1, 'track_id': 0, 'user_id': 0},
+    #     {'artist_id': 50000.0, 'country': 0, 'gender': 10, 'track_id': 1000000.0, 'user_id': 0},
+    #     {'artist_id': 10000.0, 'country': 1000, 'gender': 1, 'track_id': 0, 'user_id': 50000.0},
+    #     {'artist_id': 100000.0, 'country': 1000, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0},
+    #     {'artist_id': 10000.0, 'country': 100, 'gender': 10, 'track_id': 0, 'user_id': 0},
+    #     {'artist_id': 10000.0, 'country': 0, 'gender': 5, 'track_id': 100000.0, 'user_id': 100000.0},
+    #     {'artist_id': 0, 'country': 500, 'gender': 1, 'track_id': 500000.0, 'user_id': 0},
+    #     {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0},
+    #     {'artist_id': 50000.0, 'country': 1000, 'gender': 1, 'track_id': 1000000.0, 'user_id': 50000.0},
+    #     {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 1000000.0, 'user_id': 50000.0}]
     for config in choices:
-        my_model = MyModel(dataset.df_tracks, dataset.df_users, coef=config)
+        my_model = MyModel(dataset.df_tracks, dataset.df_users, **config)
         score, agg_res = runner.evaluate(model=my_model)
         print(f"{config}, result={score}")
         res[f"{config}"] = score, agg_res
-        with open("out-coef-3336467662.json", "w") as f:
+        with open("out-llm-112314545.json", "w") as f:
             json.dump(res, f)
+        del my_model

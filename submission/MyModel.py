@@ -221,9 +221,12 @@ class MyModel(RecModel):
         # self.lambda1 = kwargs.get("lambda1", 2.)
         # self.lambda2 = kwargs.get("lambda2", .5)
         # self.margin = kwargs.get("margin", .25)
-        self.lambda1 = kwargs.get("lambda1", 1.)
-        self.lambda2 = kwargs.get("lambda2", 2.)
-        self.margin = kwargs.get("margin", .25)
+        self.lambda1 = kwargs.get("lambda1", 5.)
+        self.lambda2 = kwargs.get("lambda2", 2.5)
+        self.margin = kwargs.get("margin", .3)
+        # self.lambda1 = kwargs.get("lambda1", 1.) <= best rn
+        # self.lambda2 = kwargs.get("lambda2", 2.)
+        # self.margin = kwargs.get("margin", .25)
 
         # default_coef = {
         #     "artist_id": 1e4,
@@ -235,7 +238,8 @@ class MyModel(RecModel):
 
         # default_coef = {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0}
         # default_coef = {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0}
-        default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0}
+        # default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0} # <== best performer
+        default_coef = {'artist_id': 0, 'country': 100, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0}
         # default_coef = {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0}
 
 
