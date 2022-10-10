@@ -5,6 +5,6 @@ scipy>=1.7.3
 notebook==6.4.12
 seaborn==0.11.2
 git+https://github.com/jacopotagliabue/reclist@develop
-gensim
-scikit-learn
+gensim==4.0.1
+scikit-learn==1.1.2
 # torch => to install torch, see pytorch webpage for packages (for cuda)
