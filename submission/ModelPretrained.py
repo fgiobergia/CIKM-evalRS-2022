@@ -13,9 +13,25 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
+from gensim.models.callbacks import CallbackAny2Vec
+from gensim.models import Word2Vec
+
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics.pairwise import cosine_similarity
 
+class EpochLogger(CallbackAny2Vec):
+    '''Callback to log information about training'''
+    def __init__(self, n_epochs):
+        self.bar = tqdm(n_epochs)
+
+    def on_epoch_begin(self, model):
+        self.bar.update()
+
+    def on_epoch_end(self, model):
+        self.bar.set_postfix(loss=model.get_latest_training_loss())
+    
+    def on_train_end(self, model):
+        self.bar.close()
 
 def get_track_rel_weight(train_df, trait):
     # trait: artist_id, track_id, user_id
@@ -45,31 +61,37 @@ def get_user_rel_weight(train_df, users_df, trait):
     return df_merged[trait].map(mapper.get)
 
 class UserEncoder(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, init=None):
         super().__init__()
 
-        k = 1 / (in_size ** .5)
-        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        if init is None:
+            k = 1 / (in_size ** .5)
+            self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        else:
+            self.mat = nn.Parameter(torch.tensor(init))
     
     def forward(self, x):
         return self.mat[x.flatten()]
 
 
 class TrackEncoder(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, init=None):
         super().__init__()
 
-        k = 1 / (in_size ** .5)
-        self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        if init is None:
+            k = 1 / (in_size ** .5)
+            self.mat = nn.Parameter(torch.empty((in_size, out_size)).uniform_(-k,  k))
+        else:
+            self.mat = nn.Parameter(torch.tensor(init))
     
     def forward(self, x):
         return self.mat[x.flatten()]
 
 class ContrastiveModel(nn.Module):
-    def __init__(self, user_size, track_size, n_dim):
+    def __init__(self, user_size, track_size, n_dim, users_vecs=None, tracks_vecs=None):
         super().__init__()
-        self.user_enc = UserEncoder(user_size, n_dim)
-        self.track_enc = TrackEncoder(track_size, n_dim)
+        self.user_enc = UserEncoder(user_size, n_dim, users_vecs)
+        self.track_enc = TrackEncoder(track_size, n_dim, tracks_vecs)
     
     def forward(self, x_user, x_track_pos, x_track_neg, x_user_pos, x_user_neg, x_track_anchor):
         x_user = self.user_enc(x_user)
@@ -221,9 +243,18 @@ class MyModel(RecModel):
         # self.lambda1 = kwargs.get("lambda1", 2.)
         # self.lambda2 = kwargs.get("lambda2", .5)
         # self.margin = kwargs.get("margin", .25)
-        self.lambda1 = kwargs.get("lambda1", 5.)
+
+        # self.lambda1 = kwargs.get("lambda1", 5.)
+        # self.lambda2 = kwargs.get("lambda2", 2.5)
+        # self.margin = kwargs.get("margin", .3)
+
+        self.lambda1 = kwargs.get("lambda1", 2.5)
         self.lambda2 = kwargs.get("lambda2", 2.5)
-        self.margin = kwargs.get("margin", .3)
+        self.margin = kwargs.get("margin", .25)
+
+
+        self.negative = kwargs.get("negative", 5)
+        self.horizon = kwargs.get("horizon", 5)
         # self.lambda1 = kwargs.get("lambda1", 1.) <= best rn
         # self.lambda2 = kwargs.get("lambda2", 2.)
         # self.margin = kwargs.get("margin", .25)
@@ -238,15 +269,86 @@ class MyModel(RecModel):
 
         # default_coef = {'artist_id': 10000.0, 'country': 500, 'gender': 5, 'track_id': 500000.0, 'user_id': 10000.0}
         # default_coef = {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0}
-        # default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0} # <== best performer
-        default_coef = {'artist_id': 0, 'country': 100, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0}
+        # default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0} # <== (1.30 - 1.31)
+        # default_coef = {'artist_id': 0, 'country': 100, 'gender': 1, 'track_id': 100000.0, 'user_id': 50000.0} # <== second
         # default_coef = {'artist_id': 50000.0, 'country': 500, 'gender': 10, 'track_id': 100000.0, 'user_id': 100000.0}
 
-
+        # default_coef = {'artist_id': 50000.0, 'country': 500, 'gender': 1, 'track_id': 100000.0, 'user_id': 100000.0}
+        # default_coef = {'artist_id': 50000.0, 'country': 0, 'gender': 10, 'track_id': 0, 'user_id': 100000.0}
+        # default_coef = {'artist_id': 50000.0, 'country': 500, 'gender': 5, 'track_id': 1000000.0, 'user_id': 50000.0} # 1.21
+        # default_coef = {'artist_id': 0, 'country': 0, 'gender': 10, 'track_id': 100000.0, 'user_id': 0} # 1.16
+        default_coef = {'artist_id': 100000.0, 'country': 500, 'gender': 10, 'track_id': 500000.0, 'user_id': 50000.0} # 1.33
         self.coef = kwargs.get("coef", default_coef)
         self.users_df = users
+        self.df_tracks = tracks
     
     def train(self, train_df: pd.DataFrame):
+        # option 1: embed each user/track as a 1-hot vector
+
+        # TODO: currently only considering songs we see during
+        # training. In a future solution, we will generalize to
+        # unseen songs by considering their proximity in some
+        # embedding space (e.g. b/c they share the same author/album)
+        self.known_tracks = list(set(train_df["track_id"].values.tolist()))
+        self.train_df = train_df
+        # train_df = pd.concat([ train_df, augment_df(train_df, 4) ])
+
+        sentences = []
+        # for track_id, row in self.df_tracks.iterrows(): #dataset.df_tracks.merge(train.groupby("track_id").size().rename("count"), left_index=True, right_index=True):
+        # for dataset.df_tracks.merge(train.groupby("track_id").size().rename("count"), left_index=True, right_index=True):
+        
+        # for _, row in tqdm(train_df.merge(self.df_tracks, right_index=True, left_on="track_id", suffixes=["_usr", ""]).iterrows(), total=len(train_df)):
+        for track_id, group in train_df.groupby("track_id"):
+            albums = map(int, self.df_tracks.loc[track_id]["albums_id"][1:-1].split(", "))
+            artist = int(group.iloc[0]["artist_id"])
+            sentence = [
+                # f'track={track_id}', f'artist={row["artist_id"]}', *[ f"album={i}" for i in map(int,row["albums_id"][1:-1].split(", ")) ]
+                f'track={track_id}', f'artist={artist}', *[ f"album={i}" for i in albums ]
+            ]
+            # adding all users in the same sentence
+            sentence = [ f'user={uid}' for uid in group["user_id"] ] + sentence
+            sentences.append(sentence)
+        
+        print("Training w2v for initialization")
+        n_epochs = 1
+        self.sentences = sentences
+        self.w2v_model = Word2Vec(self.sentences, vector_size=256,  \
+                             window=max(map(len,sentences)),  \
+                             workers=8,
+                             sg=1, hs=0, negative=self.negative, seed=42, \
+                             min_count=1, \
+                             sample=1e-5, \
+                             ns_exponent=0.5, \
+                             compute_loss=True, \
+                             # use sample param to downsample frequent words?
+                             # (or, increase # epochs)
+                             epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
+        print("Done.")
+
+        # 1.16 -- 1.64? (128 vec size?)
+        # self.w2v_model = Word2Vec(self.sentences, vector_size=256,  \
+        #                      window=max(map(len,sentences)),  \
+        #                      workers=8,
+        #                      sg=1, hs=0, negative=5, seed=42, \
+        #                      min_count=1, \
+        #                      sample=1e-5, \
+        #                      ns_exponent=0.5, \
+        #                      compute_loss=True, \
+        #                      # use sample param to downsample frequent words?
+        #                      # (or, increase # epochs)
+        #                      epochs=n_epochs, callbacks=[EpochLogger(n_epochs)])
+
+
+        # known_tracks_set = set(train_df["track_id"])
+        self.known_tracks = [ word for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ]
+        self.tracks_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.users_vecs = np.array([ self.w2v_model.wv[word] for word in self.w2v_model.wv.index_to_key if word.startswith("user=") ])
+        self.rev_track_map = np.array([ int(word.replace("track=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("track=") ])
+        self.rev_user_map = np.array([ int(word.replace("user=","")) for word in self.w2v_model.wv.index_to_key if word.startswith("user=")  ])
+        self.track_map = { k: v for v, k in enumerate(self.rev_track_map )}
+        self.user_map = { k: v for v, k in enumerate(self.rev_user_map )}
+        
+
         self.known_tracks = list(set(train_df["track_id"].values.tolist()))
         self.train_df = train_df
         # train_df = pd.concat([ train_df, augment_df(train_df) ])
@@ -275,10 +377,10 @@ class MyModel(RecModel):
 
         self.device = "cuda"# if torch.cuda.is_available() else "cpu"
 
-        self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
-        self.rev_user_map = { k: v for v,k in self.user_map.items() }
-        self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
-        self.rev_track_map = { k: v for v,k in self.track_map.items() }
+        # self.user_map = { k: v for v, k in enumerate(list(set(train_df["user_id"]))) }
+        # self.rev_user_map = { k: v for v,k in self.user_map.items() }
+        # self.track_map = { k: v for v, k in enumerate(list(set(train_df["track_id"]))) }
+        # self.rev_track_map = { k: v for v,k in self.track_map.items() }
 
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
@@ -302,7 +404,7 @@ class MyModel(RecModel):
         # dl = DataLoader(ds, batch_size=batch_size, sampler=wrs, num_workers=num_workers)
         dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim).to(self.device)
+        self.cmodel = ContrastiveModel(len(self.user_map), len(self.track_map), shared_emb_dim, self.users_vecs, self.tracks_vecs).to(self.device)
         opt = optim.Adam(self.cmodel.parameters(), weight_decay=0.)
 
         def cos_dist():
@@ -384,7 +486,7 @@ class MyModel(RecModel):
             known_likes[user] = set(grp["track_id"])
 
         # overlaps = []
-        horizon = 5
+        horizon = self.horizon
         with tqdm(range(cos_mat.shape[0])) as bar:
             for i in bar:
                 curr_k = self.top_k * horizon + len(known_likes[int(user_ids.iloc[i])])

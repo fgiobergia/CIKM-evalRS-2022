@@ -96,6 +96,7 @@ class W2VModel(RecModel):
                              sg=1, hs=0, negative=5, seed=42, \
                              min_count=1, \
                              sample=1e-5, \
+                             ns_exponent=0.25, \
                              compute_loss=True, \
                              # use sample param to downsample frequent words?
                              # (or, increase # epochs)

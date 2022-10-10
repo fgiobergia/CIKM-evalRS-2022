@@ -30,14 +30,15 @@ if __name__ == '__main__':
     # import the basic classes
     from evaluation.EvalRSRunner import EvalRSRunner
     from evaluation.EvalRSRunner import ChallengeDataset
-    # from submission.W2VModel import * 
-    from submission.MyModel import * 
+    from submission.ModelPretrained import MyModel
+    # from submission.W2VModel import W2VModel as MyModel
+    # from submission.MyModel import * 
     # from submission.MFmodel import * 
     print('\n\n==== Starting evaluation script at: {} ====\n'.format(datetime.utcnow()))
     # load the dataset
     print('\n\n==== Loading dataset at: {} ====\n'.format(datetime.utcnow()))
     # this will load the dataset with the default values for the challenge
-    # dataset = ChallengeDataset(seed=3395786, num_folds=1)
+    #dataset = ChallengeDataset(seed=3395786, num_folds=1)
     dataset = ChallengeDataset()
     print('\n\n==== Init runner at: {} ====\n'.format(datetime.utcnow()))
     # run the evaluation loop
@@ -67,6 +68,6 @@ if __name__ == '__main__':
     # and then submit the results to the leaderboard
     runner.evaluate(
         model=my_model,
-        # upload=False,
+        upload=False,
         )
     print('\n\n==== Evaluation ended at: {} ===='.format(datetime.utcnow()))
