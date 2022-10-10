@@ -140,7 +140,7 @@ if __name__ == '__main__':
         #     with open("out-coef-123456.json", "w") as f:
         #         json.dump(res, f)
 
-        res = {}
+        # res = {}
         # choices = [{'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0},
         #             {'artist_id': 0, 'country': 0, 'gender': 1, 'track_id': 1000000.0, 'user_id': 100000.0},
         #             {'artist_id': 50000.0, 'country': 100, 'gender': 5, 'track_id': 500000.0, 'user_id': 50000.0},
@@ -174,12 +174,18 @@ if __name__ == '__main__':
         #     {'artist_id': 50000.0, 'country': 1000, 'gender': 1, 'track_id': 1000000.0, 'user_id': 50000.0},
         #     {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 1000000.0, 'user_id': 50000.0}]
         outfile = f"out-llm-{seed}.json"
+        with open(outfile) as f:
+            res = json.load(f)
         for config in choices:
+            key = f"{config}"
+            if key in res:
+                print("skipping", key)
+                continue
             my_model = MyModel(dataset.df_tracks, dataset.df_users, **config)
             # my_model = MyModel(dataset.df_tracks, dataset.df_users, 100, coef=config)
             score, agg_res = runner.evaluate(model=my_model)
             print(f"{config}, result={score}")
-            res[f"{config}"] = score, agg_res
+            res[key] = score, agg_res
             with open(outfile, "w") as f:
                 json.dump(res, f)
             del my_model
