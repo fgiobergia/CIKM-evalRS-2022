@@ -28,6 +28,3 @@ Note that, although needed, PyTorch does not show up among the dependencies. Thi
 ```bash
 python submission.py
 ```
-
-## Troubleshooting
-
