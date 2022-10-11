@@ -31,14 +31,10 @@ if __name__ == '__main__':
     from evaluation.EvalRSRunner import EvalRSRunner
     from evaluation.EvalRSRunner import ChallengeDataset
     from submission.ModelPretrained import MyModel
-    # from submission.W2VModel import W2VModel as MyModel
-    # from submission.MyModel import * 
-    # from submission.MFmodel import * 
     print('\n\n==== Starting evaluation script at: {} ====\n'.format(datetime.utcnow()))
     # load the dataset
     print('\n\n==== Loading dataset at: {} ====\n'.format(datetime.utcnow()))
     # this will load the dataset with the default values for the challenge
-    #dataset = ChallengeDataset(seed=3395786, num_folds=1)
     dataset = ChallengeDataset()
     print('\n\n==== Init runner at: {} ====\n'.format(datetime.utcnow()))
     # run the evaluation loop
