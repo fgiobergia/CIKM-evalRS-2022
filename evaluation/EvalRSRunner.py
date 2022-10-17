@@ -425,7 +425,8 @@ class PhaseOne:
         "MRED_ARTIST_POPULARITY": -0.003915,
         "MRED_GENDER": -0.004354,
         "BEING_LESS_WRONG": 0.2744871, # Original score (0.322926) decreased by 15%
-        "LATENT_DIVERSITY": -0.324706
+        "LATENT_DIVERSITY": -0.324706,
+        "ARTIST_VARIANCE_AGREEMENT": 0., # not really!
     }
 
     _BEST_SCORE_P1 = {
@@ -437,5 +438,6 @@ class PhaseOne:
         "MRED_ARTIST_POPULARITY": -0.003623,
         "MRED_GENDER": -0.000032,
         "BEING_LESS_WRONG": 0.40635,
-        "LATENT_DIVERSITY": -0.202812
+        "LATENT_DIVERSITY": -0.202812,
+        "ARTIST_VARIANCE_AGREEMENT": 0., # not really!
     }

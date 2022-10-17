@@ -13,8 +13,9 @@
 """
 import numpy as np
 import pandas as pd
-from reclist.abstractions import RecList, RecDataset, rec_test
+from reclist.abstractions import RecList, RecDataset, rec_test, RecModel
 from evaluation.utils import TOP_K_CHALLENGE
+from collections import Counter
 
 class EvalRSRecList(RecList):
 
@@ -188,3 +189,31 @@ class EvalRSDataset(RecDataset):
             'users': kwargs.get('users'),
             'items': kwargs.get('items')
         }
+
+class MyEvalRSRecList(EvalRSRecList):
+    def __init__(self, model: RecModel, dataset: RecDataset, y_preds: list = None):
+        super().__init__(model, dataset, y_preds)
+        self.dataset = dataset
+
+    @rec_test("ARTIST_VARIANCE_AGREEMENT")
+    def agreement(self):
+        df = self._x_train
+        preds = self._y_preds
+        df_tracks = self.dataset._catalog["items"]
+
+        def gini(grp):
+            tot = grp.sum()
+            return 1 - ((grp / tot)**2).sum()
+
+        # compute gini for users
+        ginis_train = df.groupby(["user_id","artist_id"]).size().groupby("user_id").apply(gini)
+
+        lookup = { k: v for k, v in df_tracks["artist_id"].iteritems() }
+        df_preds = pd.DataFrame(data=np.vectorize(lookup.get)(preds.values), columns=preds.columns, index=preds.index)
+        artists_counts = { k: np.array(list(Counter(v).values())) for k, v in df_preds.iterrows() }
+        # compute ginis for predictions
+        ginis_preds = pd.Series({ k: 1-((v/v.sum())**2).sum() for k,v in artists_counts.items()})
+
+        k = list(artists_counts.keys())[0]
+        v = artists_counts[k]
+        return ginis_train.corr(ginis_preds)
