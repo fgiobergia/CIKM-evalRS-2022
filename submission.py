@@ -29,6 +29,7 @@ AWS_SECRET_KEY = os.getenv('AWS_SECRET_KEY')  # you received it in your e-mail
 if __name__ == '__main__':
     # import the basic classes
     from evaluation.EvalRSRunner import EvalRSRunner
+    from evaluation.EvalRSRecList import MyEvalRSRecList
     from evaluation.EvalRSRunner import ChallengeDataset
     from submission.ModelPretrained import MyModel
     print('\n\n==== Starting evaluation script at: {} ====\n'.format(datetime.utcnow()))
@@ -58,6 +59,8 @@ if __name__ == '__main__':
     # the evaluation loop will magically perform the fold splitting, training / testing
     # and then submit the results to the leaderboard
     runner.evaluate(
-        model=my_model
+        model=my_model,
+        upload=False,
+        custom_RecList=MyEvalRSRecList
         )
     print('\n\n==== Evaluation ended at: {} ===='.format(datetime.utcnow()))

@@ -200,6 +200,7 @@ class MyModel(RecModel):
 
         self.ns_exponent = kwargs.get("ns_exponent", .5)
 
+        self.n_epochs = kwargs.get("n_epochs", 2)
 
         self.negative = kwargs.get("negative", 5)
         self.horizon = kwargs.get("horizon", 5)
@@ -207,7 +208,10 @@ class MyModel(RecModel):
         self.n_dims = kwargs.get("n_dims", 256)
         self.use_w2v = kwargs.get("use_w2v", True)
 
-        default_coef = {'artist_id': 100000.0, 'country': 500, 'gender': 10, 'track_id': 500000.0, 'user_id': 50000.0} # 1.33
+        self.use_weights = kwargs.get("use_weights", True)
+
+        # default_coef = {'artist_id': 100000.0, 'country': 500, 'gender': 10, 'track_id': 500000.0, 'user_id': 50000.0} # 1.33
+        default_coef = {'artist_id': 10000.0, 'country': 100, 'gender': 5, 'track_id': 100000.0, 'user_id': 10000.0} 
 
         self.coef = kwargs.get("coef", default_coef)
         self.users_df = users
@@ -219,18 +223,19 @@ class MyModel(RecModel):
         for user, grp in train_df.groupby("user_id"):
             self.known_likes[user] = set(grp["track_id"])
 
-        sentences = []
-        for track_id, group in train_df.groupby("track_id"):
-            albums = map(int, self.df_tracks.loc[track_id]["albums_id"][1:-1].split(", "))
-            artist = int(group.iloc[0]["artist_id"])
-            sentence = [
-                f'track={track_id}', f'artist={artist}', *[ f"album={i}" for i in albums ]
-            ]
-            # adding all users in the same sentence
-            sentence = [ f'user={uid}' for uid in group["user_id"] ] + sentence
-            sentences.append(sentence)
         
         if self.use_w2v:
+            sentences = []
+            for track_id, group in train_df.groupby("track_id"):
+                albums = map(int, self.df_tracks.loc[track_id]["albums_id"][1:-1].split(", "))
+                artist = int(group.iloc[0]["artist_id"])
+                sentence = [
+                    f'track={track_id}', f'artist={artist}', *[ f"album={i}" for i in albums ]
+                ]
+                # adding all users in the same sentence
+                sentence = [ f'user={uid}' for uid in group["user_id"] ] + sentence
+                sentences.append(sentence)
+
             print("Training w2v for initialization")
             n_epochs = 1
             self.sentences = sentences
@@ -264,11 +269,10 @@ class MyModel(RecModel):
         self.user_map = { k: v for v, k in enumerate(self.rev_user_map )}
 
         batch_size = 512
-        n_epochs = 2
         num_workers = 4
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        print("batch size", batch_size, "#epochs", n_epochs)
+        print("batch size", batch_size, "#epochs", self.n_epochs)
 
         X_users = np.array([ self.user_map[i] for i in train_df["user_id"]]).reshape(-1,1)
         X_tracks = np.array([ self.track_map[i] for i in train_df["track_id"]]).reshape(-1,1)
@@ -295,8 +299,8 @@ class MyModel(RecModel):
         loss_func = nn.TripletMarginWithDistanceLoss(margin=self.margin, distance_function=cos_dist(), reduction="none")
         print("Training with", len(ds), "records", len(self.user_map), "users", len(self.track_map), "tracks")
 
-        for epoch in range(n_epochs):
-            print(f"Epoch {epoch+1}/{n_epochs}")
+        for epoch in range(self.n_epochs):
+            print(f"Epoch {epoch+1}/{self.n_epochs}")
             ds.update_neighbors(self.cmodel.user_enc.mat, closest=True)
             with tqdm(enumerate(dl), total=len(dl)) as bar:
                 cum_loss = 0
@@ -305,13 +309,14 @@ class MyModel(RecModel):
                 for i, (x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor, w) in bar:
                     opt.zero_grad()
                     anchor, track_pos, track_neg, user_pos, user_neg, track_anchor = self.cmodel(x_users, x_tracks_pos, x_tracks_neg, x_user_pos, x_user_neg, x_track_anchor)
-                    loss = (w * (loss_func(anchor, track_pos, track_neg) \
+                    loss = loss_func(anchor, track_pos, track_neg) \
                             + self.lambda1 * loss_func(anchor, user_pos, user_neg) \
                             + self.lambda2 * loss_func(track_anchor, track_pos, track_neg) \
-                            # + 1 * loss_func(track_anchor, user_pos, user_neg)
-                            )).mean()
-                            
-
+                    
+                    if self.use_weights:
+                        loss *= w
+                    
+                    loss = loss.mean()
                     loss.backward()
                     opt.step()
 
