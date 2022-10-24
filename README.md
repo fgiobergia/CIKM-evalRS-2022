@@ -4,7 +4,7 @@
 
 This is the solution presented in the "Triplet losses-based matrix factorization for robust recommendations" paper, for the EvalRS challenge @ CIKM 2022. 
 
-While this README is currently a stub, it will contain a more detailed description of the solution later on. 
+While this README is currently a stub, it will contain a more detailed description of the solution later on. The work is described in more detail in the [paper](https://arxiv.org/abs/2210.12098). 
 
 ## Instructions
 
@@ -28,5 +28,3 @@ Note that, although needed, PyTorch does not show up among the dependencies. Thi
 ```bash
 python submission.py
 ```
-
-## Troubleshooting
